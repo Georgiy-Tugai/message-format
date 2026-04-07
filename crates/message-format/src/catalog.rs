@@ -19,7 +19,11 @@ fn locale_candidates(locale: &Locale) -> Vec<Locale> {
 
 #[cfg(not(feature = "icu4x"))]
 fn locale_candidates(locale: &Locale) -> Vec<Locale> {
-    vec![locale.clone()]
+    if locale.id.is_unknown() {
+        vec![locale.clone()]
+    } else {
+        vec![locale.clone(), Locale::UNKNOWN]
+    }
 }
 
 /// Loaded catalog with high-level formatter construction APIs.

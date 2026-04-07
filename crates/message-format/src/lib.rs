@@ -291,6 +291,32 @@ mod tests {
 
     #[cfg(all(feature = "compile", feature = "icu4x"))]
     #[test]
+    fn bundle_lookup_uses_cldr_parent_locale() {
+        // pt-MZ has CLDR parent pt-PT, not pt (naive truncation would skip pt-PT)
+        let mut bundle = CatalogBundle::new();
+        bundle.insert(
+            locale("pt-PT"),
+            MessageCatalog::compile_str("Olá { $name }").expect("compile pt-PT"),
+        );
+        bundle.insert(
+            locale("pt"),
+            MessageCatalog::compile_str("Oi { $name }").expect("compile pt"),
+        );
+
+        let mut formatter = bundle
+            .formatter_with_locale(&locale("pt-MZ"), LocalePolicy::Lookup)
+            .expect("lookup formatter");
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Olá Ada"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
     fn bundle_lookup_reports_missing_locale_when_no_catalog_matches() {
         let mut bundle = CatalogBundle::new();
         bundle.insert(

@@ -8,8 +8,9 @@ pub enum LocalePolicy {
     Exact,
     /// Try locale fallback before returning an error.
     ///
-    /// Fallback order is: requested tag, progressively truncated subtags
-    /// (`fr-CA-x-private` -> `fr-CA-x` -> `fr-CA` -> `fr`).
+    /// Uses CLDR-aware locale fallback (via ICU4X `LocaleFallbacker`) to
+    /// produce linguistically correct candidate chains. For example,
+    /// `fr-CA` falls back to `fr`, while `pt-MZ` falls back to `pt-PT`.
     #[default]
     Lookup,
 }
