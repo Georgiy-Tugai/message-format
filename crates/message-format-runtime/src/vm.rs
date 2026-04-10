@@ -382,9 +382,9 @@ impl<'a, H: Host> Formatter<'a, H> {
     }
 }
 
-fn run_bytecode<S>(
+fn run_bytecode<H: Host, S>(
     catalog: &Catalog,
-    host: &mut dyn Host,
+    host: &mut H,
     entry_pc: u32,
     args: &dyn Args,
     fuel: Option<u64>,
@@ -503,9 +503,9 @@ fn record_diagnostic(diagnostics: &mut Option<&mut dyn DiagnosticsSink>, error: 
     }
 }
 
-fn handle_output_instruction<S>(
+fn handle_output_instruction<H: Host, S>(
     sink: &mut S,
-    host: &mut dyn Host,
+    host: &mut H,
     stack: &mut Vec<Value>,
     catalog: &Catalog,
     args: &dyn Args,
@@ -683,8 +683,8 @@ fn resolve_markup_option_key(key: Value, _catalog: &Catalog) -> Result<u32, Form
     }
 }
 
-fn handle_call_opcode(
-    host: &mut dyn Host,
+fn handle_call_opcode<H: Host>(
+    host: &mut H,
     stack: &mut Vec<Value>,
     catalog: &Catalog,
     opcode: u8,
@@ -744,8 +744,8 @@ where
     Ok(())
 }
 
-fn handle_call_instruction(
-    host: &mut dyn Host,
+fn handle_call_instruction<H: Host>(
+    host: &mut H,
     opcode: u8,
     fn_id: u16,
     call_args: &[Value],
@@ -955,9 +955,9 @@ fn emit_value_ref<S: FormatSink + ?Sized>(sink: &mut S, catalog: &Catalog, value
     }
 }
 
-fn emit_output_value<S: FormatSink + ?Sized>(
+fn emit_output_value<H: Host, S: FormatSink + ?Sized>(
     sink: &mut S,
-    host: &mut dyn Host,
+    host: &mut H,
     catalog: &Catalog,
     value: &Value,
 ) {
@@ -968,10 +968,10 @@ fn emit_output_value<S: FormatSink + ?Sized>(
     }
 }
 
-fn emit_arg_direct_or_fallback<S: FormatSink + ?Sized>(
+fn emit_arg_direct_or_fallback<H: Host, S: FormatSink + ?Sized>(
     sink: &mut S,
     catalog: &Catalog,
-    host: &mut dyn Host,
+    host: &mut H,
     args: &dyn Args,
     key_id: StrId,
     diagnostics: &mut Option<&mut dyn DiagnosticsSink>,
