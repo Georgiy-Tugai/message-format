@@ -1339,7 +1339,7 @@ mod tests {
         let catalog = catalog_for_test(&["main", "name"], "", &code);
         let mut formatter = formatter_noop(&catalog);
         let out = formatter
-            .format_by_id_for_test("main", &Vec::<(u32, Value)>::new())
+            .format_by_id_for_test("main", &[])
             .expect("formatted");
         assert_eq!(out, "{$name}");
     }
@@ -1351,7 +1351,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = TestStringSink::default();
         let errors = formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .expect("formatted");
         assert_eq!(sink.out, "{$name}");
         assert_eq!(errors, vec![FormatError::MissingArg("name".to_string())]);
@@ -1370,7 +1370,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = TestStringSink::default();
         let errors = formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .expect("formatted");
         assert_eq!(sink.out, "{$name}");
         assert_eq!(errors, vec![FormatError::MissingArg("name".to_string())]);
@@ -1405,7 +1405,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = TestStringSink::default();
         let errors = formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .expect("formatted");
         assert_eq!(sink.out, "D");
         assert_eq!(
@@ -1513,7 +1513,7 @@ mod tests {
         let catalog = catalog_for_test(&["main"], "", &code);
         let mut formatter = formatter_noop(&catalog);
         let err = formatter
-            .format_by_id_for_test("main", &Vec::<(u32, Value)>::new())
+            .format_by_id_for_test("main", &[])
             .expect_err("must fail");
         assert_eq!(err, FormatError::UnknownFunction { fn_id: 7 });
     }
@@ -1534,7 +1534,7 @@ mod tests {
         )
         .expect("host");
         let out = formatter
-            .format_by_id_for_test("main", &Vec::<(u32, Value)>::new())
+            .format_by_id_for_test("main", &[])
             .expect("formatted");
         assert_eq!(out, "1");
     }
@@ -1666,7 +1666,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         formatter.set_fuel(Some(100));
         let err = formatter
-            .format_by_id_for_test("main", &Vec::<(u32, Value)>::new())
+            .format_by_id_for_test("main", &[])
             .expect_err("must trap");
         assert_eq!(err, FormatError::Trap(Trap::FuelExhausted));
     }
@@ -1838,7 +1838,7 @@ mod tests {
         )
         .expect("host");
         let err = formatter
-            .format_by_id_for_test("main", &Vec::<(u32, Value)>::new())
+            .format_by_id_for_test("main", &[])
             .expect_err("must fail");
         assert_eq!(
             err,
@@ -1962,7 +1962,7 @@ mod tests {
         let catalog = catalog_for_test(&["main", "b"], "hi", &code);
         let mut formatter = formatter_noop(&catalog);
         let out = formatter
-            .format_by_id_for_test("main", &Vec::<(u32, Value)>::new())
+            .format_by_id_for_test("main", &[])
             .expect("formatted");
         assert_eq!(out, "hi");
     }
@@ -1976,7 +1976,7 @@ mod tests {
         let catalog_slice = catalog_for_test(&["main"], "Hello", &code_slice);
         let mut fmt_expr = formatter_noop(&catalog_expr);
         let mut fmt_slice = formatter_noop(&catalog_slice);
-        let args = Vec::<(u32, Value)>::new();
+        let args = [];
         assert_eq!(
             fmt_expr.format_by_id_for_test("main", &args).unwrap(),
             fmt_slice.format_by_id_for_test("main", &args).unwrap()
@@ -2027,7 +2027,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = CollectingSink::default();
         formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .unwrap();
         assert_eq!(
             sink.events,
@@ -2086,7 +2086,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = CollectingSink::default();
         formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .unwrap();
         assert_eq!(
             sink.events,
@@ -2104,7 +2104,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = CollectingSink::default();
         formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .unwrap();
         assert_eq!(
             sink.events,
@@ -2119,7 +2119,7 @@ mod tests {
         let mut formatter = formatter_noop(&catalog);
         let mut sink = CollectingSink::default();
         formatter
-            .format_to_for_test_by_id("main", &Vec::<(u32, Value)>::new(), &mut sink)
+            .format_to_for_test_by_id("main", &[], &mut sink)
             .unwrap();
         assert_eq!(sink.events, vec![SinkEvent::Literal("hello".to_string())]);
     }

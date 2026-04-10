@@ -43,9 +43,7 @@ pub(crate) struct VmState {
 /// }
 /// let mut out = String::new();
 /// let mut sink = StringSink(&mut out);
-/// let _errors = formatter
-///     .format_to(message, &Vec::<(u32, Value)>::new(), &mut sink)
-///     ?;
+/// let _errors = formatter.format_to(message, &[], &mut sink)?;
 /// # Ok(out)
 /// # }
 /// ```
