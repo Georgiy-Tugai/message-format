@@ -77,8 +77,6 @@ on:
   # This allows the cache to be primed.
   # See https://github.com/orgs/community/discussions/66430
   push:
-    branches:
-      - main
 
 jobs:
   fmt:
