@@ -60,14 +60,16 @@ impl MessageCatalog {
         self.catalog.string_id(value)
     }
 
-    /// Create a formatter bound to one locale for repeated formatting calls.
+    /// Create a single-catalog formatter bound to one locale.
     ///
     /// Uses CLDR-aware locale fallback to find the best available host locale.
+    /// For message-level fallback across multiple catalogs, use
+    /// [`CatalogBundle::formatter_for_locale`] instead.
     pub fn formatter_for_locale(
         &self,
         locale: &Locale,
     ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        MessageFormatter::new(&self.catalog, locale)
+        MessageFormatter::new(core::iter::once(&self.catalog), locale)
     }
 }
 
@@ -258,18 +260,36 @@ impl CatalogBundle {
         self.insert(localized.locale, localized.catalog);
     }
 
-    /// Create a formatter using locale fallback to find the best matching catalog.
+    /// Create a multi-catalog formatter with message-level fallback.
+    ///
+    /// Collects all catalogs whose locale appears in the CLDR fallback chain
+    /// for the requested locale, ordered from most specific to least. Messages
+    /// are resolved by searching these catalogs in order, so a message missing
+    /// from a more-specific catalog can still be found in a less-specific one.
+    ///
+    /// The host locale (used for number/date formatting) is derived from the
+    /// requested `locale` via its own CLDR fallback, independent of which
+    /// catalog locales matched.
     pub fn formatter_for_locale(
         &self,
         locale: &Locale,
     ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        for candidate in locale_candidates(locale) {
-            if let Some(entry) = self.catalogs.iter().find(|entry| entry.locale == candidate) {
-                return entry.catalog.formatter_for_locale(&candidate);
-            }
+        let catalogs: Vec<&runtime::Catalog> = locale_candidates(locale)
+            .into_iter()
+            .filter_map(|candidate| {
+                self.catalogs
+                    .iter()
+                    .find(|entry| entry.locale == candidate)
+                    .map(|entry| entry.catalog.as_runtime_catalog())
+            })
+            .collect();
+
+        if catalogs.is_empty() {
+            return Err(runtime::FormatError::Trap(
+                runtime::Trap::MissingLocaleCatalog,
+            ));
         }
-        Err(runtime::FormatError::Trap(
-            runtime::Trap::MissingLocaleCatalog,
-        ))
+
+        MessageFormatter::new(catalogs, locale)
     }
 }
