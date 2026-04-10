@@ -241,10 +241,7 @@ pub struct Formatter<'a, H: Host> {
     catalog: &'a Catalog,
     index: H::CatalogIndex,
     host: H,
-    fuel: Option<u64>,
-    stack: Vec<Value>,
-    call_args: Vec<Value>,
-    call_options: Vec<(u32, Value)>,
+    vm: VmState,
 }
 
 enum SelectorValue<'a> {
@@ -254,6 +251,14 @@ enum SelectorValue<'a> {
     },
     InvalidBorrowed,
     Owned(Value),
+}
+
+#[derive(Default)]
+struct VmState {
+    fuel: Option<u64>,
+    stack: Vec<Value>,
+    call_args: Vec<Value>,
+    call_options: Vec<(u32, Value)>,
 }
 
 #[derive(Default)]
@@ -377,10 +382,7 @@ impl<'a, H: Host> Formatter<'a, H> {
             catalog,
             index,
             host,
-            fuel: None,
-            stack: Vec::new(),
-            call_args: Vec::new(),
-            call_options: Vec::new(),
+            vm: VmState::default(),
         })
     }
 
@@ -391,7 +393,7 @@ impl<'a, H: Host> Formatter<'a, H> {
     /// default). Use this to defend against denial-of-service from untrusted
     /// catalogs that may contain infinite loops.
     pub fn set_fuel(&mut self, fuel: Option<u64>) {
-        self.fuel = fuel;
+        self.vm.fuel = fuel;
     }
 
     /// Resolve a message id to a reusable handle.
@@ -420,12 +422,12 @@ impl<'a, H: Host> Formatter<'a, H> {
             &self.index,
             message.entry_pc,
             args,
-            self.fuel,
-            &mut self.stack,
+            self.vm.fuel,
+            &mut self.vm.stack,
             sink,
             Some(&mut diagnostics),
-            &mut self.call_args,
-            &mut self.call_options,
+            &mut self.vm.call_args,
+            &mut self.vm.call_options,
         )?;
         Ok(diagnostics.into_inner())
     }
