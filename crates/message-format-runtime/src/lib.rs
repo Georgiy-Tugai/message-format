@@ -189,7 +189,7 @@ pub use error::{
     CatalogError, FormatError, HostCallError, ImplementationFailure, MessageFunctionError, Trap,
     UnsupportedOperation,
 };
-pub use formatter::Formatter;
+pub use formatter::{Formatter, MultiFormatter, MultiMessageHandle};
 pub use schema::{FuncEntry, MessageEntry};
 pub use value::{ArgNameError, Args, MessageArgs, StrId, Value};
 pub use vm::{FormatOption, FormatSink, Host, HostFn, MessageHandle, NoopHost};
