@@ -10,7 +10,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::{fmt, str};
+use core::str;
 
 use crate::{
     catalog::{Catalog, read_i32},
@@ -29,7 +29,7 @@ pub use crate::schema::{
 /// Resolved message handle for repeated formatting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MessageHandle {
-    entry_pc: u32,
+    pub(crate) entry_pc: u32,
 }
 
 impl MessageHandle {
@@ -52,7 +52,7 @@ pub trait Host {
 
     /// Pre-compute catalog-specific data for this host.
     ///
-    /// Called once by [`Formatter::new`] and stored for the lifetime of the
+    /// Called once by [`Formatter::new`](crate::Formatter::new) and stored for the lifetime of the
     /// formatter.  Implementations that do not need catalog data should use
     /// `type CatalogIndex = ();` and return `Ok(())`.
     fn index(&mut self, catalog: &Catalog) -> Result<Self::CatalogIndex, FormatError>;
@@ -191,7 +191,7 @@ where
 /// Sink for structured formatting output.
 ///
 /// Implement this trait to receive rich formatting events instead of flat string output.
-/// Used with [`Formatter::format_to`].
+/// Used with [`Formatter::format_to`](crate::Formatter::format_to).
 ///
 /// Event ordering matches message execution order. String-oriented sinks usually
 /// concatenate [`Self::literal`] and [`Self::expression`] and either ignore or
@@ -228,17 +228,17 @@ pub struct FormatOption<'a> {
     pub value: Cow<'a, str>,
 }
 
-trait DiagnosticsSink {
+pub(crate) trait DiagnosticsSink {
     fn record(&mut self, error: FormatError);
 }
 
 #[derive(Default)]
-struct VecDiagnostics {
+pub(crate) struct VecDiagnostics {
     errors: Vec<FormatError>,
 }
 
 impl VecDiagnostics {
-    fn into_inner(self) -> Vec<FormatError> {
+    pub(crate) fn into_inner(self) -> Vec<FormatError> {
         self.errors
     }
 }
@@ -249,41 +249,6 @@ impl DiagnosticsSink for VecDiagnostics {
     }
 }
 
-/// Formatter executes catalog messages with caller-provided arguments and host functions.
-///
-/// Catalogs are expected to come from the compiler or prebuilt assets. This
-/// example assumes a loaded catalog whose `"main"` message invokes a host
-/// function and formats its result.
-///
-/// ```rust,no_run
-/// use message_format_runtime::{Catalog, FormatError, Formatter, HostFn, HostCallError, Value};
-///
-/// # fn render(catalog: &Catalog) -> Result<String, FormatError> {
-/// let host = HostFn(|_fn_id, _args, _opts| Ok(Value::Str("called".to_string())));
-/// let mut formatter = Formatter::new(&catalog, host)?;
-/// let message = formatter.resolve("main")?;
-/// struct StringSink<'a>(&'a mut String);
-/// impl message_format_runtime::FormatSink for StringSink<'_> {
-///     fn literal(&mut self, s: &str) { self.0.push_str(s); }
-///     fn expression(&mut self, s: &str) { self.0.push_str(s); }
-///     fn markup_open(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {}
-///     fn markup_close(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {}
-/// }
-/// let mut out = String::new();
-/// let mut sink = StringSink(&mut out);
-/// let _errors = formatter
-///     .format_to(message, &Vec::<(u32, Value)>::new(), &mut sink)
-///     ?;
-/// # Ok(out)
-/// # }
-/// ```
-pub struct Formatter<'a, H: Host> {
-    catalog: &'a Catalog,
-    index: H::CatalogIndex,
-    host: H,
-    vm: VmState,
-}
-
 enum SelectorValue<'a> {
     Borrowed {
         view: ValueView<'a>,
@@ -291,14 +256,6 @@ enum SelectorValue<'a> {
     },
     InvalidBorrowed,
     Owned(Value),
-}
-
-#[derive(Default)]
-struct VmState {
-    fuel: Option<u64>,
-    stack: Vec<Value>,
-    call_args: Vec<Value>,
-    call_options: Vec<(u32, Value)>,
 }
 
 #[derive(Default)]
@@ -404,76 +361,7 @@ impl ExprState {
     }
 }
 
-impl<H: Host> fmt::Debug for Formatter<'_, H> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Formatter")
-            .field("catalog", &self.catalog)
-            .finish_non_exhaustive()
-    }
-}
-
-impl<'a, H: Host> Formatter<'a, H> {
-    /// Create a formatter for a loaded catalog.
-    ///
-    /// Calls [`Host::index`] to pre-compute catalog-specific data.
-    pub fn new(catalog: &'a Catalog, mut host: H) -> Result<Self, FormatError> {
-        let index = host.index(catalog)?;
-        Ok(Self {
-            catalog,
-            index,
-            host,
-            vm: VmState::default(),
-        })
-    }
-
-    /// Set the maximum number of instructions the VM may execute per message.
-    ///
-    /// When the budget is exhausted, formatting returns
-    /// [`FormatError::Trap`]. Pass `None` for unlimited execution (the
-    /// default). Use this to defend against denial-of-service from untrusted
-    /// catalogs that may contain infinite loops.
-    pub fn set_fuel(&mut self, fuel: Option<u64>) {
-        self.vm.fuel = fuel;
-    }
-
-    /// Resolve a message id to a reusable handle.
-    pub fn resolve(&self, message_id: &str) -> Result<MessageHandle, FormatError> {
-        MessageHandle::from_catalog(self.catalog, message_id)
-    }
-
-    /// Format one message from a previously resolved handle, dispatching events to a [`FormatSink`].
-    ///
-    /// Returns recoverable formatting diagnostics collected during fallback
-    /// rendering. Fatal execution failures are returned as `Err`.
-    ///
-    /// This is the runtime API that preserves structured markup. In contrast,
-    /// string-oriented convenience helpers flatten only literal/expression text
-    /// and drop markup events.
-    pub fn format_to<S: FormatSink + ?Sized>(
-        &mut self,
-        message: MessageHandle,
-        args: &dyn Args,
-        sink: &mut S,
-    ) -> Result<Vec<FormatError>, FormatError> {
-        let mut diagnostics = VecDiagnostics::default();
-        run_bytecode(
-            self.catalog,
-            &mut self.host,
-            &self.index,
-            message.entry_pc,
-            args,
-            self.vm.fuel,
-            &mut self.vm.stack,
-            sink,
-            Some(&mut diagnostics),
-            &mut self.vm.call_args,
-            &mut self.vm.call_options,
-        )?;
-        Ok(diagnostics.into_inner())
-    }
-}
-
-fn run_bytecode<H: Host, S>(
+pub(crate) fn run_bytecode<H: Host, S>(
     catalog: &Catalog,
     host: &mut H,
     index: &H::CatalogIndex,
@@ -1309,6 +1197,7 @@ mod tests {
     use alloc::{string::String, vec, vec::Vec};
 
     use super::*;
+    use crate::Formatter;
     use crate::catalog::{FuncEntry, MessageEntry, build_catalog, build_catalog_with_funcs};
     use crate::error::{ImplementationFailure, MessageFunctionError};
     use crate::schema::TestOps;
