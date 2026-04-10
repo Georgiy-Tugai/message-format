@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 
 use icu_locale_core::Locale;
 
-use crate::{formatter::MessageFormatter, options::LocalePolicy, runtime};
+use crate::{formatter::MessageFormatter, runtime};
 
 #[cfg(feature = "icu4x")]
 fn locale_candidates(locale: &Locale) -> Vec<Locale> {
@@ -62,25 +62,12 @@ impl MessageCatalog {
 
     /// Create a formatter bound to one locale for repeated formatting calls.
     ///
-    /// Equivalent to calling [`Self::formatter_with_locale`] with
-    /// [`LocalePolicy::Lookup`].
+    /// Uses CLDR-aware locale fallback to find the best available host locale.
     pub fn formatter_for_locale(
         &self,
         locale: &Locale,
     ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        self.formatter_with_locale(locale, LocalePolicy::Lookup)
-    }
-
-    /// Create a formatter bound to one locale with explicit fallback policy.
-    ///
-    /// With `icu4x`, `locale` is resolved according to `policy`.
-    /// Without `icu4x`, `locale` is ignored.
-    pub fn formatter_with_locale(
-        &self,
-        locale: &Locale,
-        policy: LocalePolicy,
-    ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        MessageFormatter::new(&self.catalog, locale, policy)
+        MessageFormatter::new(&self.catalog, locale)
     }
 }
 
@@ -271,47 +258,18 @@ impl CatalogBundle {
         self.insert(localized.locale, localized.catalog);
     }
 
-    /// Create a formatter for locale by searching catalogs according to policy.
-    pub fn formatter_with_locale(
-        &self,
-        locale: &Locale,
-        policy: LocalePolicy,
-    ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        match policy {
-            LocalePolicy::Exact => {
-                let entry = self
-                    .catalogs
-                    .iter()
-                    .find(|entry| &entry.locale == locale)
-                    .ok_or(runtime::FormatError::Trap(
-                        runtime::Trap::MissingLocaleCatalog,
-                    ))?;
-                entry
-                    .catalog
-                    .formatter_with_locale(locale, LocalePolicy::Exact)
-            }
-            LocalePolicy::Lookup => {
-                for candidate in locale_candidates(locale) {
-                    if let Some(entry) =
-                        self.catalogs.iter().find(|entry| entry.locale == candidate)
-                    {
-                        return entry
-                            .catalog
-                            .formatter_with_locale(&candidate, LocalePolicy::Exact);
-                    }
-                }
-                Err(runtime::FormatError::Trap(
-                    runtime::Trap::MissingLocaleCatalog,
-                ))
-            }
-        }
-    }
-
-    /// Create a formatter using lookup fallback policy.
+    /// Create a formatter using locale fallback to find the best matching catalog.
     pub fn formatter_for_locale(
         &self,
         locale: &Locale,
     ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        self.formatter_with_locale(locale, LocalePolicy::Lookup)
+        for candidate in locale_candidates(locale) {
+            if let Some(entry) = self.catalogs.iter().find(|entry| entry.locale == candidate) {
+                return entry.catalog.formatter_for_locale(&candidate);
+            }
+        }
+        Err(runtime::FormatError::Trap(
+            runtime::Trap::MissingLocaleCatalog,
+        ))
     }
 }

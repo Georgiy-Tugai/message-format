@@ -37,7 +37,7 @@
 //! ```rust
 //! # #[cfg(all(feature = "compile", feature = "icu4x"))]
 //! # {
-//! use message_format::{CatalogBundle, Locale, LocalePolicy, MessageArgs, MessageCatalog, compiler::CompileOptions};
+//! use message_format::{CatalogBundle, Locale, MessageArgs, MessageCatalog, compiler::CompileOptions};
 //!
 //! let mut bundle = CatalogBundle::new();
 //! let fr: Locale = "fr".parse().unwrap();
@@ -48,7 +48,7 @@
 //! bundle.insert(en.clone(), en_catalog);
 //!
 //! let requested: Locale = "fr-CA".parse().unwrap();
-//! let mut formatter = bundle.formatter_with_locale(&requested, LocalePolicy::Lookup).unwrap();
+//! let mut formatter = bundle.formatter_for_locale(&requested).unwrap();
 //! let mut args = MessageArgs::new();
 //! args.insert("name", "Ada");
 //! assert_eq!(formatter.format_by_id("main", &args).unwrap(), "Salut Ada");
@@ -80,12 +80,9 @@ pub use message_format_compiler as compiler;
 mod args;
 mod catalog;
 mod formatter;
-mod options;
-
 pub use args::MessageArgs;
 pub use catalog::{CatalogBundle, LocalizedCatalog, MessageCatalog};
 pub use formatter::MessageFormatter;
-pub use options::LocalePolicy;
 
 #[cfg(test)]
 mod tests {
@@ -225,7 +222,7 @@ mod tests {
         );
 
         let mut formatter = bundle
-            .formatter_with_locale(&locale("fr-CA"), LocalePolicy::Lookup)
+            .formatter_for_locale(&locale("fr-CA"))
             .expect("lookup formatter");
 
         let mut args = MessageArgs::new();
@@ -238,7 +235,7 @@ mod tests {
 
     #[cfg(all(feature = "compile", feature = "icu4x"))]
     #[test]
-    fn bundle_exact_uses_requested_locale_catalog() {
+    fn bundle_returns_exact_match_when_available() {
         let mut bundle = CatalogBundle::new();
         let en_catalog = MessageCatalog::compile_str("Hello").expect("compile en");
         let fr_catalog = MessageCatalog::compile_str("Bonjour").expect("compile fr");
@@ -246,8 +243,8 @@ mod tests {
         bundle.insert(locale("fr"), fr_catalog);
 
         let mut formatter = bundle
-            .formatter_with_locale(&locale("fr"), LocalePolicy::Exact)
-            .expect("exact formatter");
+            .formatter_for_locale(&locale("fr"))
+            .expect("formatter");
         let args = MessageArgs::new();
         assert_eq!(
             formatter.format_by_id("main", &args).expect("format"),
@@ -267,7 +264,7 @@ mod tests {
         bundle.insert(locale("fr"), fr_catalog);
 
         let mut formatter = bundle
-            .formatter_with_locale(&locale("en-AU"), LocalePolicy::Lookup)
+            .formatter_for_locale(&locale("en-AU"))
             .expect("lookup formatter");
 
         let mut args = MessageArgs::new();
@@ -284,7 +281,7 @@ mod tests {
     fn empty_bundle_reports_missing_locale_catalog() {
         let bundle = CatalogBundle::new();
         let err = bundle
-            .formatter_with_locale(&locale("en"), LocalePolicy::Lookup)
+            .formatter_for_locale(&locale("en"))
             .expect_err("must fail");
         assert_eq!(err, FormatError::Trap(Trap::MissingLocaleCatalog));
     }
@@ -304,7 +301,7 @@ mod tests {
         );
 
         let mut formatter = bundle
-            .formatter_with_locale(&locale("pt-MZ"), LocalePolicy::Lookup)
+            .formatter_for_locale(&locale("pt-MZ"))
             .expect("lookup formatter");
 
         let mut args = MessageArgs::new();
@@ -325,7 +322,7 @@ mod tests {
         );
 
         let err = bundle
-            .formatter_with_locale(&locale("en-US"), LocalePolicy::Lookup)
+            .formatter_for_locale(&locale("en-US"))
             .expect_err("must fail");
         assert_eq!(err, FormatError::Trap(Trap::MissingLocaleCatalog));
     }

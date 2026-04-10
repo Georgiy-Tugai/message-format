@@ -5,7 +5,7 @@ use alloc::string::String;
 
 use icu_locale_core::Locale;
 
-use crate::{MessageArgs, options::LocalePolicy, runtime};
+use crate::{MessageArgs, runtime};
 
 struct OutputStringSink<'a> {
     out: &'a mut String,
@@ -40,40 +40,26 @@ impl<'a> MessageFormatter<'a> {
     pub(crate) fn new(
         catalog: &'a runtime::Catalog,
         locale: &Locale,
-        policy: LocalePolicy,
     ) -> Result<Self, runtime::FormatError> {
-        match policy {
-            LocalePolicy::Exact => {
-                let host = runtime::BuiltinHost::new(locale)?;
-                Ok(Self {
-                    catalog,
-                    inner: runtime::Formatter::new(catalog, host)?,
-                })
-            }
-            LocalePolicy::Lookup => {
-                let mut last_err = None;
-                for candidate in runtime::locale_fallback_candidates(locale) {
-                    match runtime::BuiltinHost::new(&candidate) {
-                        Ok(host) => {
-                            return Ok(Self {
-                                catalog,
-                                inner: runtime::Formatter::new(catalog, host)?,
-                            });
-                        }
-                        Err(err) => last_err = Some(err),
-                    }
+        let mut last_err = None;
+        for candidate in runtime::locale_fallback_candidates(locale) {
+            match runtime::BuiltinHost::new(&candidate) {
+                Ok(host) => {
+                    return Ok(Self {
+                        catalog,
+                        inner: runtime::Formatter::new(catalog, host)?,
+                    });
                 }
-                Err(last_err
-                    .unwrap_or(runtime::FormatError::Trap(runtime::Trap::UnsupportedLocale)))
+                Err(err) => last_err = Some(err),
             }
         }
+        Err(last_err.unwrap_or(runtime::FormatError::Trap(runtime::Trap::UnsupportedLocale)))
     }
 
     #[cfg(not(feature = "icu4x"))]
     pub(crate) fn new(
         catalog: &'a runtime::Catalog,
         _locale: &Locale,
-        _policy: LocalePolicy,
     ) -> Result<Self, runtime::FormatError> {
         Ok(Self {
             catalog,
