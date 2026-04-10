@@ -95,6 +95,46 @@ pub trait Host {
     }
 }
 
+/// Delegating implementation for boxed hosts
+impl<H: Host> Host for Box<H> {
+    type CatalogIndex = H::CatalogIndex;
+
+    fn index(&mut self, catalog: &Catalog) -> Result<Self::CatalogIndex, FormatError> {
+        H::index(self, catalog)
+    }
+
+    fn call(
+        &mut self,
+        catalog: &Catalog,
+        index: &Self::CatalogIndex,
+        fn_id: u16,
+        args: &[Value],
+        opts: &[(u32, Value)],
+    ) -> Result<Value, HostCallError> {
+        H::call(self, catalog, index, fn_id, args, opts)
+    }
+
+    fn call_select(
+        &mut self,
+        catalog: &Catalog,
+        index: &Self::CatalogIndex,
+        fn_id: u16,
+        args: &[Value],
+        opts: &[(u32, Value)],
+    ) -> Result<Value, HostCallError> {
+        H::call_select(self, catalog, index, fn_id, args, opts)
+    }
+
+    fn format_default(
+        &mut self,
+        catalog: &Catalog,
+        index: &Self::CatalogIndex,
+        value: &Value,
+    ) -> Option<String> {
+        H::format_default(self, catalog, index, value)
+    }
+}
+
 /// Host implementation that always fails unknown functions.
 #[derive(Debug, Default)]
 pub struct NoopHost;
