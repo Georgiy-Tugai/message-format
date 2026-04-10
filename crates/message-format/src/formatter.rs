@@ -37,7 +37,7 @@ impl runtime::FormatSink for OutputStringSink<'_> {
 #[derive(Debug)]
 pub struct MessageFormatter<'a> {
     #[cfg(feature = "icu4x")]
-    inner: runtime::MultiFormatter<'a, runtime::BuiltinHost>,
+    inner: runtime::MultiFormatter<'a, alloc::boxed::Box<runtime::BuiltinHost>>,
     #[cfg(not(feature = "icu4x"))]
     inner: runtime::MultiFormatter<'a, runtime::NoopHost>,
 }
@@ -53,7 +53,7 @@ impl<'a> MessageFormatter<'a> {
             match runtime::BuiltinHost::new(&candidate) {
                 Ok(host) => {
                     return Ok(Self {
-                        inner: runtime::MultiFormatter::new(catalogs, host)?,
+                        inner: runtime::MultiFormatter::new(catalogs, host.into())?,
                     });
                 }
                 Err(err) => last_err = Some(err),
