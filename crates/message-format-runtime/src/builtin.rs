@@ -208,31 +208,17 @@ struct TimeStyleDateTimeFormatterCache {
     long: Option<DateTimeFormatter<fieldsets::YMDT>>,
 }
 
-/// Built-in host implementation for a subset of MF2 default functions.
+/// Pre-parsed catalog data needed by the built-in host.
 #[derive(Debug)]
-pub struct BuiltinHost<'a> {
-    catalog: &'a Catalog,
-    locale: Locale,
-    cardinal_rules: PluralRules,
-    ordinal_rules: PluralRules,
+struct CatalogIndex {
     by_id: BTreeMap<u16, BuiltinEntry>,
     option_keys_by_str_id: BTreeMap<u32, BuiltinOptionKey>,
     /// Cached string pool IDs for plural category names, indexed by `category_index()`.
     category_pool_ids: [Option<u32>; 6],
-    icu_formatters: IcuFormatterCache,
 }
 
-impl<'a> BuiltinHost<'a> {
-    /// Build a host mapping known function names from a catalog's FUNC chunk.
-    ///
-    /// Returns:
-    /// - `FormatError::Trap(Trap::UnsupportedLocale)` when ICU plural rules are unavailable.
-    pub fn from_catalog(catalog: &'a Catalog, locale: &Locale) -> Result<Self, FormatError> {
-        let cardinal_rules = PluralRules::try_new_cardinal(locale.into())
-            .map_err(|_| FormatError::Trap(Trap::UnsupportedLocale))?;
-        let ordinal_rules = PluralRules::try_new_ordinal(locale.into())
-            .map_err(|_| FormatError::Trap(Trap::UnsupportedLocale))?;
-
+impl CatalogIndex {
+    fn new(catalog: &Catalog) -> Result<Self, FormatError> {
         let mut by_id = BTreeMap::new();
         let mut option_keys_by_str_id = BTreeMap::new();
         for idx in 0..catalog.string_count() {
@@ -305,23 +291,51 @@ impl<'a> BuiltinHost<'a> {
         }
 
         Ok(Self {
-            catalog,
-            locale: locale.clone(),
-            cardinal_rules,
-            ordinal_rules,
             by_id,
             option_keys_by_str_id,
             category_pool_ids,
+        })
+    }
+}
+
+/// Built-in host implementation for a subset of MF2 default functions.
+#[derive(Debug)]
+pub struct BuiltinHost<'a> {
+    catalog: &'a Catalog,
+    index: CatalogIndex,
+    locale: Locale,
+    cardinal_rules: PluralRules,
+    ordinal_rules: PluralRules,
+    icu_formatters: IcuFormatterCache,
+}
+
+impl<'a> BuiltinHost<'a> {
+    /// Build a host mapping known function names from a catalog's FUNC chunk.
+    ///
+    /// Returns:
+    /// - `FormatError::Trap(Trap::UnsupportedLocale)` when ICU plural rules are unavailable.
+    pub fn from_catalog(catalog: &'a Catalog, locale: &Locale) -> Result<Self, FormatError> {
+        let cardinal_rules = PluralRules::try_new_cardinal(locale.into())
+            .map_err(|_| FormatError::Trap(Trap::UnsupportedLocale))?;
+        let ordinal_rules = PluralRules::try_new_ordinal(locale.into())
+            .map_err(|_| FormatError::Trap(Trap::UnsupportedLocale))?;
+
+        Ok(Self {
+            catalog,
+            index: CatalogIndex::new(catalog)?,
+            locale: locale.clone(),
+            cardinal_rules,
+            ordinal_rules,
             icu_formatters: IcuFormatterCache::default(),
         })
     }
 
     fn apply(
         catalog: &Catalog,
+        index: &CatalogIndex,
         locale: &Locale,
         cardinal_rules: &PluralRules,
         ordinal_rules: &PluralRules,
-        option_keys_by_str_id: &BTreeMap<u32, BuiltinOptionKey>,
         icu_formatters: &mut IcuFormatterCache,
         entry: &BuiltinEntry,
         args: &[Value],
@@ -330,7 +344,8 @@ impl<'a> BuiltinHost<'a> {
         let Some(raw_arg) = args.first() else {
             return Err(bad_operand());
         };
-        let options = EffectiveOptions::new(&entry.options, opts, catalog, option_keys_by_str_id);
+        let options =
+            EffectiveOptions::new(&entry.options, opts, catalog, &index.option_keys_by_str_id);
         options.validate_keys()?;
         validate_builtin_option_values(entry.func, &options)?;
 
@@ -445,7 +460,8 @@ impl<'a> BuiltinHost<'a> {
             return None;
         }
         if opts.iter().any(|(key_id, _)| {
-            self.option_keys_by_str_id
+            self.index
+                .option_keys_by_str_id
                 .get(key_id)
                 .is_none_or(|key| *key != BuiltinOptionKey::Select)
         }) {
@@ -455,7 +471,7 @@ impl<'a> BuiltinHost<'a> {
             &entry.options,
             opts,
             self.catalog,
-            &self.option_keys_by_str_id,
+            &self.index.option_keys_by_str_id,
         );
         match options
             .get(BuiltinOptionKey::Select)
@@ -498,15 +514,15 @@ impl Host for BuiltinHost<'_> {
         args: &[Value],
         opts: &[(u32, Value)],
     ) -> Result<Value, HostCallError> {
-        let Some(entry) = self.by_id.get(&fn_id) else {
+        let Some(entry) = self.index.by_id.get(&fn_id) else {
             return Err(HostCallError::UnknownFunction { fn_id });
         };
         Self::apply(
             self.catalog,
+            &self.index,
             &self.locale,
             &self.cardinal_rules,
             &self.ordinal_rules,
-            &self.option_keys_by_str_id,
             &mut self.icu_formatters,
             entry,
             args,
@@ -521,7 +537,7 @@ impl Host for BuiltinHost<'_> {
         args: &[Value],
         opts: &[(u32, Value)],
     ) -> Result<Value, HostCallError> {
-        let Some(entry) = self.by_id.get(&fn_id) else {
+        let Some(entry) = self.index.by_id.get(&fn_id) else {
             return Err(HostCallError::UnknownFunction { fn_id });
         };
         // For number/integer with select=plural|ordinal, compute category and
@@ -535,11 +551,11 @@ impl Host for BuiltinHost<'_> {
                 &entry.options,
                 opts,
                 self.catalog,
-                &self.option_keys_by_str_id,
+                &self.index.option_keys_by_str_id,
             );
             let category = plural_category(raw_arg, self.catalog, rules, &options)
                 .map_err(into_host_call_error)?;
-            return if let Some(str_id) = self.category_pool_ids[category_index(category)] {
+            return if let Some(str_id) = self.index.category_pool_ids[category_index(category)] {
                 Ok(Value::StrRef(str_id))
             } else {
                 Ok(Value::Str(category_name(category).to_string()))
@@ -547,10 +563,10 @@ impl Host for BuiltinHost<'_> {
         }
         Self::apply(
             self.catalog,
+            &self.index,
             &self.locale,
             &self.cardinal_rules,
             &self.ordinal_rules,
-            &self.option_keys_by_str_id,
             &mut self.icu_formatters,
             entry,
             args,
@@ -2107,7 +2123,7 @@ mod tests {
     #[test]
     fn builtin_host_maps_number_function() {
         let host = builtin_host(&["number"]);
-        assert_eq!(host.by_id.len(), 1);
+        assert_eq!(host.index.by_id.len(), 1);
     }
 
     #[test]
