@@ -87,7 +87,7 @@ mod args;
 mod catalog;
 mod formatter;
 pub use args::MessageArgs;
-pub use catalog::{CatalogBundle, LocalizedCatalog, MessageCatalog};
+pub use catalog::{CatalogBundle, LocalizedCatalog, LookupError, MessageCatalog};
 pub use formatter::MessageFormatter;
 
 #[cfg(test)]

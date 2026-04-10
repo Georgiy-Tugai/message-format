@@ -271,6 +271,36 @@ impl CatalogBundle {
         })
     }
 
+    /// Create a bundle by looking up catalogs for each locale in the fallback
+    /// chain.
+    ///
+    /// Calls `fetch` once per candidate locale, from most specific to least.
+    /// The callback returns `Ok(Some(catalog))` when a catalog is available,
+    /// `Ok(None)` when none exists for that locale, or `Err(e)` to abort.
+    /// Returns [`LookupError::MissingLocaleCatalog`] if no candidate produced
+    /// a catalog.
+    pub fn from_lookup<E>(
+        locale: &Locale,
+        mut fetch: impl FnMut(&Locale) -> Result<Option<MessageCatalog>, E>,
+    ) -> Result<Self, LookupError<E>> {
+        let candidates = locale_candidates(locale);
+        let mut catalogs = Vec::new();
+        for candidate in &candidates {
+            match fetch(candidate) {
+                Ok(Some(catalog)) => catalogs.push(catalog.catalog),
+                Ok(None) => {}
+                Err(e) => return Err(LookupError::Fetch(e)),
+            }
+        }
+        if catalogs.is_empty() {
+            return Err(LookupError::MissingLocaleCatalog);
+        }
+        Ok(Self {
+            catalogs,
+            candidates,
+        })
+    }
+
     /// Create a multi-catalog formatter with message-level fallback.
     ///
     /// Catalogs are searched in fallback order (most specific to least).
@@ -279,4 +309,13 @@ impl CatalogBundle {
     pub fn formatter(&self) -> Result<MessageFormatter<'_>, runtime::FormatError> {
         MessageFormatter::new(self.catalogs.iter(), &self.candidates)
     }
+}
+
+/// Error returned by [`CatalogBundle::from_lookup`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LookupError<E> {
+    /// The user-provided callback returned an error.
+    Fetch(E),
+    /// No catalog matched any candidate in the fallback chain.
+    MissingLocaleCatalog,
 }
