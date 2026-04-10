@@ -46,10 +46,10 @@ impl<'a> MessageFormatter<'a> {
     #[cfg(feature = "icu4x")]
     pub(crate) fn new(
         catalogs: impl IntoIterator<Item = &'a runtime::Catalog>,
-        locale: &Locale,
+        candidates: impl IntoIterator<Item = Locale>,
     ) -> Result<Self, runtime::FormatError> {
         let mut last_err = None;
-        for candidate in runtime::locale_fallback_candidates(locale) {
+        for candidate in candidates {
             match runtime::BuiltinHost::new(&candidate) {
                 Ok(host) => {
                     return Ok(Self {
@@ -65,7 +65,7 @@ impl<'a> MessageFormatter<'a> {
     #[cfg(not(feature = "icu4x"))]
     pub(crate) fn new(
         catalogs: impl IntoIterator<Item = &'a runtime::Catalog>,
-        _locale: &Locale,
+        _candidates: impl IntoIterator<Item = Locale>,
     ) -> Result<Self, runtime::FormatError> {
         Ok(Self {
             inner: runtime::MultiFormatter::new(catalogs, runtime::NoopHost)?,

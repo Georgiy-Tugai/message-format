@@ -13,12 +13,12 @@ use icu_locale_core::Locale;
 use crate::{formatter::MessageFormatter, runtime};
 
 #[cfg(feature = "icu4x")]
-fn locale_candidates(locale: &Locale) -> Vec<Locale> {
+pub(crate) fn locale_candidates(locale: &Locale) -> Vec<Locale> {
     runtime::locale_fallback_candidates(locale)
 }
 
 #[cfg(not(feature = "icu4x"))]
-fn locale_candidates(locale: &Locale) -> Vec<Locale> {
+pub(crate) fn locale_candidates(locale: &Locale) -> Vec<Locale> {
     if locale.id.is_unknown() {
         vec![locale.clone()]
     } else {
@@ -69,7 +69,7 @@ impl MessageCatalog {
         &self,
         locale: &Locale,
     ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        MessageFormatter::new(core::iter::once(&self.catalog), locale)
+        MessageFormatter::new(core::iter::once(&self.catalog), locale_candidates(locale))
     }
 }
 
@@ -274,12 +274,13 @@ impl CatalogBundle {
         &self,
         locale: &Locale,
     ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        let catalogs: Vec<&runtime::Catalog> = locale_candidates(locale)
-            .into_iter()
+        let candidates = locale_candidates(locale);
+        let catalogs: Vec<&runtime::Catalog> = candidates
+            .iter()
             .filter_map(|candidate| {
                 self.catalogs
                     .iter()
-                    .find(|entry| entry.locale == candidate)
+                    .find(|entry| entry.locale == *candidate)
                     .map(|entry| entry.catalog.as_runtime_catalog())
             })
             .collect();
@@ -290,6 +291,6 @@ impl CatalogBundle {
             ));
         }
 
-        MessageFormatter::new(catalogs, locale)
+        MessageFormatter::new(catalogs, candidates)
     }
 }

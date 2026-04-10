@@ -92,6 +92,9 @@ pub use formatter::MessageFormatter;
 #[cfg(test)]
 mod tests {
     #[cfg(all(feature = "compile", feature = "icu4x"))]
+    use crate::catalog::locale_candidates;
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
     use super::runtime::{FormatError, Trap};
     #[cfg(any(
         all(feature = "compile", feature = "icu4x"),
@@ -415,7 +418,7 @@ mod tests {
         // comma as decimal separator) — the catalog itself has no locale.
         let mut formatter = MessageFormatter::new(
             core::iter::once(catalog.as_runtime_catalog()),
-            &locale("fr"),
+            locale_candidates(&locale("fr")),
         )
         .expect("formatter");
 
