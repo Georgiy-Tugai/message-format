@@ -56,29 +56,7 @@ fn nested_markup() {
 /// Integration: compile markup source, `format_to` with collecting sink, assert events.
 #[test]
 fn format_to_markup_events_through_compiler() {
-    use message_format::runtime::{BuiltinHost, Catalog, FormatSink, Formatter};
-
-    #[derive(Default)]
-    struct Events(Vec<String>);
-
-    impl FormatSink for Events {
-        fn literal(&mut self, s: &str) {
-            self.0.push(format!("L:{s}"));
-        }
-        fn expression(&mut self, s: &str) {
-            self.0.push(format!("E:{s}"));
-        }
-        fn markup_open(&mut self, name: &str, _opts: &[message_format::runtime::FormatOption<'_>]) {
-            self.0.push(format!("O:{name}"));
-        }
-        fn markup_close(
-            &mut self,
-            name: &str,
-            _opts: &[message_format::runtime::FormatOption<'_>],
-        ) {
-            self.0.push(format!("C:{name}"));
-        }
-    }
+    use message_format::runtime::{BuiltinHost, Catalog, Formatter};
 
     let source = "{#b}Hello {$name}{/b}";
     let bytes = message_format::compiler::compile_str(source).expect("compile");
@@ -104,29 +82,7 @@ fn format_to_markup_events_through_compiler() {
 /// Integration: self-closing markup through compiler produces open+close events.
 #[test]
 fn format_to_self_closing_markup_through_compiler() {
-    use message_format::runtime::{BuiltinHost, Catalog, FormatSink, Formatter};
-
-    #[derive(Default)]
-    struct Events(Vec<String>);
-
-    impl FormatSink for Events {
-        fn literal(&mut self, s: &str) {
-            self.0.push(format!("L:{s}"));
-        }
-        fn expression(&mut self, s: &str) {
-            self.0.push(format!("E:{s}"));
-        }
-        fn markup_open(&mut self, name: &str, _opts: &[message_format::runtime::FormatOption<'_>]) {
-            self.0.push(format!("O:{name}"));
-        }
-        fn markup_close(
-            &mut self,
-            name: &str,
-            _opts: &[message_format::runtime::FormatOption<'_>],
-        ) {
-            self.0.push(format!("C:{name}"));
-        }
-    }
+    use message_format::runtime::{BuiltinHost, Catalog, Formatter};
 
     let source = "a{#br /}b";
     let bytes = message_format::compiler::compile_str(source).expect("compile");

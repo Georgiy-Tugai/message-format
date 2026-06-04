@@ -5,8 +5,28 @@ use crate::runtime_helpers;
 use message_format::{
     Locale,
     compiler::{CompileError, CompileOptions, compile, compile_str},
-    runtime::{BuiltinHost, Catalog, FormatError, Formatter, MessageFunctionError, Value},
+    runtime::{
+        BuiltinHost, Catalog, FormatError, FormatSink, Formatter, MessageFunctionError, Value,
+    },
 };
+
+#[derive(Default)]
+pub(crate) struct Events(pub(crate) Vec<String>);
+
+impl FormatSink for Events {
+    fn literal(&mut self, s: &str) {
+        self.0.push(format!("L:{s}"));
+    }
+    fn expression(&mut self, s: &str) {
+        self.0.push(format!("E:{s}"));
+    }
+    fn markup_open(&mut self, name: &str, _opts: &[message_format::runtime::FormatOption<'_>]) {
+        self.0.push(format!("O:{name}"));
+    }
+    fn markup_close(&mut self, name: &str, _opts: &[message_format::runtime::FormatOption<'_>]) {
+        self.0.push(format!("C:{name}"));
+    }
+}
 
 /// Return source as-is for compilation. Single MF2 messages are auto-assigned
 /// id "main" by the compiler's single-message path, so no wrapping is needed.
