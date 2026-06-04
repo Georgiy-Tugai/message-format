@@ -17,29 +17,10 @@ use std::{env, hint::black_box};
 use icu_locale_core::Locale;
 use message_format_compiler::compile_str;
 use message_format_runtime::{
-    BuiltinHost, Catalog, FormatSink, Formatter, MessageArgs, Value,
+    BuiltinHost, Catalog, Formatter, MessageArgs, Value,
     catalog::{FuncEntry, MessageEntry, build_catalog, build_catalog_with_funcs},
     vm,
 };
-
-struct OutputStringSink<'a> {
-    out: &'a mut String,
-}
-
-impl FormatSink for OutputStringSink<'_> {
-    fn literal(&mut self, s: &str) {
-        self.out.push_str(s);
-    }
-
-    fn expression(&mut self, s: &str) {
-        self.out.push_str(s);
-    }
-
-    fn markup_open(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {}
-
-    fn markup_close(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {
-    }
-}
 
 fn locale(tag: &str) -> Locale {
     tag.parse::<Locale>().expect("locale")
@@ -219,7 +200,7 @@ fn main() {
             let mut out = String::new();
             for _ in 0..iters {
                 out.clear();
-                let mut sink = OutputStringSink { out: &mut out };
+                let mut sink = String::new();
                 formatter
                     .format_to(message, &args, &mut sink, None)
                     .expect("format");
@@ -238,7 +219,7 @@ fn main() {
             let mut out = String::new();
             for _ in 0..iters {
                 out.clear();
-                let mut sink = OutputStringSink { out: &mut out };
+                let mut sink = String::new();
                 formatter
                     .format_to(message, &args, &mut sink, None)
                     .expect("format");
@@ -257,7 +238,7 @@ fn main() {
             let mut out = String::new();
             for _ in 0..iters {
                 out.clear();
-                let mut sink = OutputStringSink { out: &mut out };
+                let mut sink = String::new();
                 formatter
                     .format_to(message, &args, &mut sink, None)
                     .expect("format");
@@ -279,7 +260,7 @@ fn main() {
             let mut out = String::new();
             for _ in 0..iters {
                 out.clear();
-                let mut sink = OutputStringSink { out: &mut out };
+                let mut sink = String::new();
                 formatter
                     .format_to(message, &args, &mut sink, None)
                     .expect("format");

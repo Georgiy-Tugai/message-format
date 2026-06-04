@@ -17,26 +17,6 @@ use message_format_runtime::{
     vm,
 };
 
-#[derive(Default)]
-struct BenchStringSink {
-    out: String,
-}
-
-impl FormatSink for BenchStringSink {
-    fn literal(&mut self, value: &str) {
-        self.out.push_str(value);
-    }
-
-    fn expression(&mut self, value: &str) {
-        self.out.push_str(value);
-    }
-
-    fn markup_open(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {}
-
-    fn markup_close(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {
-    }
-}
-
 trait RuntimeFormatExt<H: Host> {
     fn format_for_bench(
         &mut self,
@@ -62,9 +42,9 @@ impl<H: Host> RuntimeFormatExt<H> for Formatter<'_, H> {
         message: MessageHandle,
         args: &dyn Args,
     ) -> Result<String, FormatError> {
-        let mut sink = BenchStringSink::default();
+        let mut sink = String::new();
         self.format_to(message, args, &mut sink, None)?;
-        Ok(sink.out)
+        Ok(sink)
     }
 
     fn format_by_id_for_bench(

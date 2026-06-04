@@ -304,7 +304,7 @@ mod tests {
 
     use super::*;
     use crate::catalog::{MessageEntry, build_catalog};
-    use crate::vm::{FormatOption, NoopHost};
+    use crate::vm::NoopHost;
 
     /// Build a minimal catalog with one message named by `strings[0]`.
     fn one_message_catalog(strings: &[&str], literals: &str, code: &[u8]) -> Catalog {
@@ -318,25 +318,6 @@ mod tests {
             code,
         );
         Catalog::from_bytes(&bytes).expect("valid catalog")
-    }
-
-    #[derive(Default)]
-    struct TestStringSink {
-        out: String,
-    }
-
-    impl FormatSink for TestStringSink {
-        fn literal(&mut self, s: &str) {
-            self.out.push_str(s);
-        }
-
-        fn expression(&mut self, s: &str) {
-            self.out.push_str(s);
-        }
-
-        fn markup_open(&mut self, _name: &str, _options: &[FormatOption<'_>]) {}
-
-        fn markup_close(&mut self, _name: &str, _options: &[FormatOption<'_>]) {}
     }
 
     use crate::schema::TestOps;
@@ -398,7 +379,7 @@ mod tests {
         );
 
         let mut mf = mf;
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         assert_eq!(
             mf.format_to(bad_handle, &vec![] as &Vec<(u32, Value)>, &mut sink, None)
                 .unwrap_err(),
@@ -428,11 +409,11 @@ mod tests {
         // is interned. Against cat1 it would return ArgNameError.
         args.insert("who", "world").expect("arg interned in cat2");
 
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         let mut diagnostics = vec![];
         mf.format_to(handle, &args, &mut sink, Some(&mut diagnostics))
             .unwrap();
         assert!(diagnostics.is_empty());
-        assert_eq!(sink.out, "world");
+        assert_eq!(sink, "world");
     }
 }
