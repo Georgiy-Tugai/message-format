@@ -1308,25 +1308,6 @@ mod tests {
         catalog.string_id(name).expect("arg id")
     }
 
-    #[derive(Default)]
-    struct TestStringSink {
-        out: String,
-    }
-
-    impl FormatSink for TestStringSink {
-        fn literal(&mut self, s: &str) {
-            self.out.push_str(s);
-        }
-
-        fn expression(&mut self, s: &str) {
-            self.out.push_str(s);
-        }
-
-        fn markup_open(&mut self, _name: &str, _options: &[FormatOption<'_>]) {}
-
-        fn markup_close(&mut self, _name: &str, _options: &[FormatOption<'_>]) {}
-    }
-
     trait FormatterTestExt<H: Host> {
         fn format_by_id_for_test(
             &mut self,
@@ -1348,9 +1329,9 @@ mod tests {
             args: &dyn Args,
         ) -> Result<String, FormatError> {
             let message = self.resolve(message_id)?;
-            let mut sink = TestStringSink::default();
+            let mut sink = String::new();
             self.format_to(message, args, &mut sink, None)?;
-            Ok(sink.out)
+            Ok(sink)
         }
 
         fn format_to_for_test_by_id(
@@ -1399,11 +1380,11 @@ mod tests {
         let code = TestOps::new().out_arg(1).halt().build();
         let catalog = catalog_for_test(&["main", "name"], "", &code);
         let mut formatter = formatter_noop(&catalog);
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         let errors = formatter
             .format_to_for_test_by_id("main", &[], &mut sink)
             .expect("formatted");
-        assert_eq!(sink.out, "{$name}");
+        assert_eq!(sink, "{$name}");
         assert_eq!(errors, vec![FormatError::MissingArg("name".to_string())]);
     }
 
@@ -1418,11 +1399,11 @@ mod tests {
             .build();
         let catalog = catalog_for_test(&["main", "name", "{$name}"], "", &code);
         let mut formatter = formatter_noop(&catalog);
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         let errors = formatter
             .format_to_for_test_by_id("main", &[], &mut sink)
             .expect("formatted");
-        assert_eq!(sink.out, "{$name}");
+        assert_eq!(sink, "{$name}");
         assert_eq!(errors, vec![FormatError::MissingArg("name".to_string())]);
     }
 
@@ -1453,11 +1434,11 @@ mod tests {
             .build();
         let catalog = catalog_for_test(&["main", "sel", "hit"], "HD", &code);
         let mut formatter = formatter_noop(&catalog);
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         let errors = formatter
             .format_to_for_test_by_id("main", &[], &mut sink)
             .expect("formatted");
-        assert_eq!(sink.out, "D");
+        assert_eq!(sink, "D");
         assert_eq!(
             errors,
             vec![FormatError::BadSelector {
@@ -1517,11 +1498,11 @@ mod tests {
         let catalog = catalog_for_test(&["main", "sel", "hit"], "HD", &code);
         let mut formatter = Formatter::new(&catalog, FailingSelectHost).expect("host");
         let args = vec![(arg_id(&catalog, "sel"), Value::Int(1))];
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         let errors = formatter
             .format_to_for_test_by_id("main", &args, &mut sink)
             .expect("formatted");
-        assert_eq!(sink.out, "D");
+        assert_eq!(sink, "D");
         assert_eq!(
             errors,
             vec![FormatError::BadSelector {
@@ -1599,11 +1580,11 @@ mod tests {
         let direct = formatter
             .format_by_id_for_test("main", &args)
             .expect("format");
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         formatter
             .format_to(handle, &args, &mut sink, None)
             .expect("format");
-        let resolved = sink.out;
+        let resolved = sink;
         assert_eq!(direct, resolved);
     }
 
@@ -1675,12 +1656,12 @@ mod tests {
         let inf = ValueView::Float(f64::INFINITY);
         let neg_inf = ValueView::Float(f64::NEG_INFINITY);
 
-        let mut sink = TestStringSink::default();
+        let mut sink = String::new();
         nan.emit_expression(&mut sink);
         inf.emit_expression(&mut sink);
         neg_inf.emit_expression(&mut sink);
         assert_eq!(
-            sink.out,
+            sink,
             format!("{}{}{}", f64::NAN, f64::INFINITY, f64::NEG_INFINITY)
         );
 

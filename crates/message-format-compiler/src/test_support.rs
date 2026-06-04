@@ -7,27 +7,6 @@ use message_format_runtime::{Catalog, FormatError, Formatter, Host, NoopHost};
 
 use crate::compile::compile_str;
 
-/// Test-only [`message_format_runtime::FormatSink`] that accumulates output into a `String`.
-#[derive(Default)]
-pub(crate) struct OutputStringSink {
-    pub(crate) out: String,
-}
-
-impl message_format_runtime::FormatSink for OutputStringSink {
-    fn literal(&mut self, s: &str) {
-        self.out.push_str(s);
-    }
-
-    fn expression(&mut self, s: &str) {
-        self.out.push_str(s);
-    }
-
-    fn markup_open(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {}
-
-    fn markup_close(&mut self, _name: &str, _options: &[message_format_runtime::FormatOption<'_>]) {
-    }
-}
-
 /// Convenience extension trait to format a message by id into a `String`.
 pub(crate) trait FormatterTestExt<H: Host> {
     /// Format `message_id` with `args` and return the accumulated output.
@@ -45,9 +24,9 @@ impl<H: Host> FormatterTestExt<H> for Formatter<'_, H> {
         args: &dyn message_format_runtime::Args,
     ) -> Result<String, FormatError> {
         let message = self.resolve(message_id)?;
-        let mut sink = OutputStringSink::default();
+        let mut sink = String::new();
         self.format_to(message, args, &mut sink, None)?;
-        Ok(sink.out)
+        Ok(sink)
     }
 }
 
