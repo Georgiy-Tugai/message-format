@@ -1,8 +1,9 @@
 // Copyright 2026 the Message Format Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use alloc::vec;
 use alloc::vec::Vec;
+#[cfg(not(feature = "icu4x"))]
+use alloc::vec;
 
 use icu_locale_core::Locale;
 
@@ -49,17 +50,17 @@ impl runtime::Catalog {
 
 /// A catalog associated with one locale.
 #[derive(Debug, Clone)]
-pub struct LocalizedCatalog {
+pub struct LocalizedCatalog<C = runtime::Catalog> {
     /// Locale for this catalog.
     pub locale: Locale,
     /// Message catalog payload.
-    pub catalog: runtime::Catalog,
+    pub catalog: C,
 }
 
-impl LocalizedCatalog {
+impl<C> LocalizedCatalog<C> {
     /// Construct a localized catalog pair.
     #[must_use]
-    pub fn new(locale: Locale, catalog: runtime::Catalog) -> Self {
+    pub fn new(locale: Locale, catalog: C) -> Self {
         Self { locale, catalog }
     }
 }
@@ -71,13 +72,13 @@ impl LocalizedCatalog {
 /// Messages are resolved by searching catalogs in order, so a message missing
 /// from a more-specific catalog can still be found in a less-specific one.
 #[derive(Debug, Clone)]
-pub struct CatalogBundle {
-    catalogs: Vec<runtime::Catalog>,
+pub struct CatalogBundle<C = runtime::Catalog> {
+    catalogs: Vec<C>,
     /// Formatting-locale candidates, independent of catalog locales
     candidates: Vec<Locale>,
 }
 
-impl CatalogBundle {
+impl<C: AsRef<runtime::Catalog>> CatalogBundle<C> {
     /// Create a bundle targeting `locale` from the given catalogs.
     ///
     /// Computes the CLDR fallback chain for the requested locale and retains
@@ -85,19 +86,21 @@ impl CatalogBundle {
     /// specific to least. Returns an error if no catalog matches any
     /// candidate in the fallback chain.
     pub fn new(
-        catalogs: impl IntoIterator<Item = LocalizedCatalog>,
+        catalogs: impl IntoIterator<Item = LocalizedCatalog<C>>,
         locale: &Locale,
     ) -> Result<Self, runtime::FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
         let candidates = locale_candidates(locale);
-        let mut slots: Vec<Option<runtime::Catalog>> = vec![None; candidates.len()];
+        let mut slots: Vec<Option<C>> = core::iter::repeat_with(|| None)
+            .take(candidates.len())
+            .collect();
         for lc in catalogs {
             if let Some(pos) = candidates.iter().position(|c| *c == lc.locale) {
                 slots[pos] = Some(lc.catalog);
             }
         }
-        let catalogs: Vec<runtime::Catalog> = slots.into_iter().flatten().collect();
+        let catalogs: Vec<C> = slots.into_iter().flatten().collect();
         if catalogs.is_empty() {
             return Err(runtime::FormatError::Trap(
                 runtime::Trap::MissingLocaleCatalog,
@@ -119,7 +122,7 @@ impl CatalogBundle {
     /// a catalog.
     pub fn from_lookup<E>(
         locale: &Locale,
-        mut fetch: impl FnMut(&Locale) -> Result<Option<runtime::Catalog>, E>,
+        mut fetch: impl FnMut(&Locale) -> Result<Option<C>, E>,
     ) -> Result<Self, LookupError<E>> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
@@ -149,7 +152,7 @@ impl CatalogBundle {
     pub fn formatter(&self) -> Result<MessageFormatter<'_>, runtime::FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        MessageFormatter::new(self.catalogs.iter(), &self.candidates)
+        MessageFormatter::new(self.catalogs.iter().map(AsRef::as_ref), &self.candidates)
     }
 }
 

@@ -294,7 +294,8 @@ mod tests {
     #[cfg(all(feature = "compile", feature = "icu4x"))]
     #[test]
     fn empty_bundle_reports_missing_locale_catalog() {
-        let err = CatalogBundle::new([], &locale("en")).expect_err("must fail");
+        let err =
+            CatalogBundle::<Catalog>::new([], &locale("en")).expect_err("must fail");
         assert_eq!(err, FormatError::Trap(Trap::MissingLocaleCatalog));
     }
 
@@ -468,6 +469,85 @@ mod tests {
         assert_eq!(
             compile_and_format("{-1e23 :offset subtract=1 signDisplay=never}", &args),
             "100000000000000000000000"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn borrowed_bundle_via_new() {
+        let fr_catalog = Catalog::compile_str("Salut { $name }").expect("compile fr");
+        let en_catalog = Catalog::compile_str("Hello { $name }").expect("compile en");
+
+        let bundle = CatalogBundle::new(
+            [
+                LocalizedCatalog::new(locale("fr"), &fr_catalog),
+                LocalizedCatalog::new(locale("en"), &en_catalog),
+            ],
+            &locale("fr-CA"),
+        )
+        .expect("bundle");
+
+        let mut formatter = bundle.formatter().expect("formatter");
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Salut Ada"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn borrowed_bundle_via_from_lookup() {
+        let fr_catalog = Catalog::compile_str("Bonjour").expect("compile fr");
+        let en_catalog = Catalog::compile_str("Hello").expect("compile en");
+
+        let catalogs: alloc::vec::Vec<(Locale, &Catalog)> = alloc::vec![
+            (locale("fr"), &fr_catalog),
+            (locale("en"), &en_catalog),
+        ];
+
+        let bundle = CatalogBundle::<&Catalog>::from_lookup(&locale("fr"), |loc| {
+            Ok::<_, core::convert::Infallible>(
+                catalogs
+                    .iter()
+                    .find(|(l, _)| l == loc)
+                    .map(|(_, c)| *c),
+            )
+        })
+        .expect("bundle");
+
+        let mut formatter = bundle.formatter().expect("formatter");
+        let args = MessageArgs::new();
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Bonjour"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn arc_bundle() {
+        use alloc::sync::Arc;
+
+        let fr_catalog = Arc::new(Catalog::compile_str("Salut { $name }").expect("compile fr"));
+        let en_catalog = Arc::new(Catalog::compile_str("Hello { $name }").expect("compile en"));
+
+        let bundle = CatalogBundle::new(
+            [
+                LocalizedCatalog::new(locale("fr"), Arc::clone(&fr_catalog)),
+                LocalizedCatalog::new(locale("en"), Arc::clone(&en_catalog)),
+            ],
+            &locale("fr-CA"),
+        )
+        .expect("bundle");
+
+        let mut formatter = bundle.formatter().expect("formatter");
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Salut Ada"
         );
     }
 

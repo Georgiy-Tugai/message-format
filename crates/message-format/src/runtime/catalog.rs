@@ -257,6 +257,12 @@ impl Catalog {
     }
 }
 
+impl AsRef<Self> for Catalog {
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
 impl Catalog {
     fn string_slice_from_parts<'a>(
         bytes: &'a [u8],
