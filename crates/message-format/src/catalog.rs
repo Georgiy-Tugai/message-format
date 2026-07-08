@@ -40,11 +40,8 @@ impl runtime::Catalog {
     pub fn formatter_for_locale(
         &self,
         locale: &Locale,
-    ) -> Result<MessageFormatter<'_>, runtime::FormatError> {
-        #[cfg(feature = "profiling")]
-        profiling::function_scope!();
-        let candidates = locale_candidates(locale);
-        MessageFormatter::new(core::iter::once(self), &candidates)
+    ) -> Result<MessageFormatter<&'_ Self>, runtime::FormatError> {
+        MessageFormatter::for_locale(self, locale)
     }
 }
 
@@ -146,13 +143,39 @@ impl<C: AsRef<runtime::Catalog>> CatalogBundle<C> {
 
     /// Create a multi-catalog formatter with message-level fallback.
     ///
+    /// Returns a borrowing formatter tied to the bundle's lifetime. For an
+    /// owning formatter (e.g. `'static` when `C = Arc<Catalog>`), use
+    /// [`into_formatter`](Self::into_formatter).
+    ///
     /// Catalogs are searched in fallback order (most specific to least).
     /// The host locale for number/date formatting is derived from the
     /// target locale's CLDR fallback chain.
-    pub fn formatter(&self) -> Result<MessageFormatter<'_>, runtime::FormatError> {
+    pub fn formatter(&self) -> Result<MessageFormatter<&'_ runtime::Catalog>, runtime::FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
         MessageFormatter::new(self.catalogs.iter().map(AsRef::as_ref), &self.candidates)
+    }
+
+    /// Consume the bundle and return an owning formatter.
+    ///
+    /// When `C = Arc<Catalog>`, the resulting `MessageFormatter<Arc<Catalog>>`
+    /// is `'static` and can be cached in maps or embedded in long-lived structs.
+    /// To keep using the bundle afterward, clone it first:
+    /// `bundle.clone().into_formatter()` (cheap when `C = Arc<Catalog>`).
+    pub fn into_formatter(self) -> Result<MessageFormatter<C>, runtime::FormatError> {
+        #[cfg(feature = "profiling")]
+        profiling::function_scope!();
+        MessageFormatter::new(self.catalogs, &self.candidates)
+    }
+
+    /// Returns the fallback-chain candidates, most specific first.
+    pub fn candidates(&self) -> &[Locale] {
+        &self.candidates
+    }
+
+    /// Returns the retained catalogs in fallback order.
+    pub fn catalogs(&self) -> &[C] {
+        &self.catalogs
     }
 }
 

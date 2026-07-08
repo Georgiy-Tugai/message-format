@@ -19,7 +19,7 @@ pub(crate) trait FormatterTestExt<H: Host> {
     ) -> Result<String, FormatError>;
 }
 
-impl<H: Host> FormatterTestExt<H> for Formatter<'_, H> {
+impl<C: AsRef<Catalog>, H: Host> FormatterTestExt<H> for Formatter<C, H> {
     fn format_by_id_for_test(
         &mut self,
         message_id: &str,

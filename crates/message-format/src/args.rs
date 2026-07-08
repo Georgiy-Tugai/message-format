@@ -67,11 +67,14 @@ impl MessageArgs {
         self.values.as_slice()
     }
 
-    pub(crate) fn resolve<'a>(&self, catalog: &'a runtime::Catalog) -> runtime::MessageArgs<'a> {
-        let mut resolved = runtime::MessageArgs::with_capacity(catalog, self.values.len());
+    pub(crate) fn resolve(
+        &self,
+        catalog: &runtime::Catalog,
+    ) -> Vec<(runtime::StrId, runtime::Value)> {
+        let mut resolved = Vec::with_capacity(self.values.len());
         for (name, value) in &self.values {
             if let Some(id) = catalog.string_id(name) {
-                resolved.insert_id(id, value.clone());
+                resolved.push((id, value.clone()));
             }
         }
         resolved

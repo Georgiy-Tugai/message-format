@@ -36,7 +36,7 @@ trait RuntimeFormatExt<H: Host> {
     ) -> Result<(), FormatError>;
 }
 
-impl<H: Host> RuntimeFormatExt<H> for Formatter<'_, H> {
+impl<C: AsRef<Catalog>, H: Host> RuntimeFormatExt<H> for Formatter<C, H> {
     fn format_for_bench(
         &mut self,
         message: MessageHandle,

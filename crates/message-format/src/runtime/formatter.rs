@@ -13,6 +13,7 @@ use crate::runtime::{
     vm::{DiagnosticsSink, FormatSink, Host, MessageHandle, run_bytecode},
 };
 
+
 #[derive(Default)]
 pub(crate) struct VmState {
     pub(crate) fuel: Option<u64>,
@@ -47,35 +48,40 @@ pub(crate) struct VmState {
 /// # Ok(out)
 /// # }
 /// ```
-pub struct Formatter<'a, H: Host> {
-    catalog: &'a Catalog,
+pub struct Formatter<C, H: Host> {
+    catalog: C,
     index: H::CatalogIndex,
     host: H,
     vm: VmState,
 }
 
-impl<H: Host> fmt::Debug for Formatter<'_, H> {
+impl<C: AsRef<Catalog>, H: Host> fmt::Debug for Formatter<C, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Formatter")
-            .field("catalog", &self.catalog)
+            .field("catalog", self.catalog.as_ref())
             .finish_non_exhaustive()
     }
 }
 
-impl<'a, H: Host> Formatter<'a, H> {
+impl<C: AsRef<Catalog>, H: Host> Formatter<C, H> {
     /// Create a formatter for a loaded catalog.
     ///
     /// Calls [`Host::index`] to pre-compute catalog-specific data.
-    pub fn new(catalog: &'a Catalog, mut host: H) -> Result<Self, FormatError> {
+    pub fn new(catalog: C, mut host: H) -> Result<Self, FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        let index = host.index(catalog)?;
+        let index = host.index(catalog.as_ref())?;
         Ok(Self {
             catalog,
             index,
             host,
             vm: VmState::default(),
         })
+    }
+
+    /// Returns a reference to the underlying catalog.
+    pub fn catalog(&self) -> &Catalog {
+        self.catalog.as_ref()
     }
 
     /// Set the maximum number of instructions the VM may execute per message.
@@ -92,7 +98,7 @@ impl<'a, H: Host> Formatter<'a, H> {
     pub fn resolve(&self, message_id: &str) -> Result<MessageHandle, FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        MessageHandle::from_catalog(self.catalog, message_id)
+        MessageHandle::from_catalog(self.catalog.as_ref(), message_id)
     }
 
     /// Format one message from a previously resolved handle, dispatching events to a [`FormatSink`].
@@ -113,7 +119,7 @@ impl<'a, H: Host> Formatter<'a, H> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
         run_bytecode(
-            self.catalog,
+            self.catalog.as_ref(),
             &mut self.host,
             &self.index,
             message.entry_pc,
@@ -144,13 +150,13 @@ pub struct MultiMessageHandle {
 /// Each catalog gets its own [`Host::CatalogIndex`], computed at construction time.
 /// The catalog list is fixed after construction — messages are resolved by
 /// searching catalogs in the order they were provided.
-pub struct MultiFormatter<'a, H: Host> {
-    catalogs: Box<[(&'a Catalog, H::CatalogIndex)]>,
+pub struct MultiFormatter<C, H: Host> {
+    catalogs: Box<[(C, H::CatalogIndex)]>,
     host: H,
     vm: VmState,
 }
 
-impl<H: Host> fmt::Debug for MultiFormatter<'_, H> {
+impl<C: AsRef<Catalog>, H: Host> fmt::Debug for MultiFormatter<C, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MultiFormatter")
             .field("catalog_count", &self.catalogs.len())
@@ -158,13 +164,13 @@ impl<H: Host> fmt::Debug for MultiFormatter<'_, H> {
     }
 }
 
-impl<'a, H: Host> MultiFormatter<'a, H> {
+impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
     /// Create a multi-catalog formatter.
     ///
     /// Calls [`Host::index`] for each catalog to build its catalog-specific
     /// index. Catalogs are searched in iterator order during [`Self::resolve`].
     pub fn new(
-        catalogs: impl IntoIterator<Item = &'a Catalog>,
+        catalogs: impl IntoIterator<Item = C>,
         mut host: H,
     ) -> Result<Self, FormatError> {
         #[cfg(feature = "profiling")]
@@ -172,7 +178,7 @@ impl<'a, H: Host> MultiFormatter<'a, H> {
         let catalogs: Box<[_]> = catalogs
             .into_iter()
             .map(|catalog| {
-                let index = host.index(catalog)?;
+                let index = host.index(catalog.as_ref())?;
                 Ok((catalog, index))
             })
             .collect::<Result<_, FormatError>>()?;
@@ -202,7 +208,7 @@ impl<'a, H: Host> MultiFormatter<'a, H> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
         for (idx, (catalog, _)) in self.catalogs.iter().enumerate() {
-            if let Some(entry_pc) = catalog.message_pc(message_id) {
+            if let Some(entry_pc) = catalog.as_ref().message_pc(message_id) {
                 return Ok(MultiMessageHandle {
                     #[allow(
                         clippy::cast_possible_truncation,
@@ -228,10 +234,10 @@ impl<'a, H: Host> MultiFormatter<'a, H> {
     /// from another `MultiFormatter` whose slot index happens to be in range
     /// will be accepted — the caller must ensure handles are used with the
     /// formatter that produced them.
-    pub fn catalog_for(&self, handle: MultiMessageHandle) -> Result<&'a Catalog, FormatError> {
+    pub fn catalog_for(&self, handle: MultiMessageHandle) -> Result<&Catalog, FormatError> {
         self.catalogs
             .get(handle.catalog_idx as usize)
-            .map(|(catalog, _)| *catalog)
+            .map(|(catalog, _)| catalog.as_ref())
             .ok_or(FormatError::Trap(Trap::InvalidCatalogIndex))
     }
 
@@ -245,7 +251,7 @@ impl<'a, H: Host> MultiFormatter<'a, H> {
     ///
     /// Returns [`FormatError::Trap`] if the catalog slot index is out of
     /// range. See [`Self::catalog_for`] for the handle-provenance caveat.
-    pub fn args_for(&self, handle: MultiMessageHandle) -> Result<MessageArgs<'a>, FormatError> {
+    pub fn args_for(&self, handle: MultiMessageHandle) -> Result<MessageArgs<'_>, FormatError> {
         self.catalog_for(handle).map(MessageArgs::new)
     }
 
@@ -282,7 +288,7 @@ impl<'a, H: Host> MultiFormatter<'a, H> {
             .get(message.catalog_idx as usize)
             .ok_or(FormatError::Trap(Trap::InvalidCatalogIndex))?;
         run_bytecode(
-            catalog,
+            catalog.as_ref(),
             &mut self.host,
             index,
             message.entry_pc,
@@ -408,12 +414,76 @@ mod tests {
         // This insert succeeds because args_for bound to cat2 where "who"
         // is interned. Against cat1 it would return ArgNameError.
         args.insert("who", "world").expect("arg interned in cat2");
+        let args = args.into_vec();
 
         let mut sink = String::new();
         let mut diagnostics = vec![];
         mf.format_to(handle, &args, &mut sink, Some(&mut diagnostics))
             .unwrap();
         assert!(diagnostics.is_empty());
+        assert_eq!(sink, "world");
+    }
+
+    #[test]
+    fn owned_single_formatter() {
+        let code = TestOps::new().out_slice(0, 2).halt().build();
+        let catalog = one_message_catalog(&["greet"], "hi", &code);
+
+        let mut formatter = Formatter::new(catalog, NoopHost).unwrap();
+        assert!(formatter.catalog().string_id("greet").is_some());
+
+        let handle = formatter.resolve("greet").unwrap();
+        let mut sink = String::new();
+        formatter
+            .format_to(handle, &vec![] as &Vec<(u32, Value)>, &mut sink, None)
+            .unwrap();
+        assert_eq!(sink, "hi");
+    }
+
+    #[test]
+    fn catalog_accessor() {
+        let code = TestOps::new().out_slice(0, 2).halt().build();
+        let catalog = one_message_catalog(&["greet"], "hi", &code);
+        let formatter = Formatter::new(&catalog, NoopHost).unwrap();
+        assert!(formatter.catalog().string_id("greet").is_some());
+    }
+
+    #[test]
+    fn owned_multi_formatter() {
+        let code_hi = TestOps::new().out_slice(0, 2).halt().build();
+        let code_bye = TestOps::new().out_slice(0, 3).halt().build();
+        let cat1 = one_message_catalog(&["greet"], "hi", &code_hi);
+        let cat2 = one_message_catalog(&["farewell"], "bye", &code_bye);
+
+        let mut mf = MultiFormatter::new([cat1, cat2], NoopHost).unwrap();
+        let h1 = mf.resolve("greet").unwrap();
+        let h2 = mf.resolve("farewell").unwrap();
+
+        let mut sink = String::new();
+        mf.format_to(h1, &vec![] as &Vec<(u32, Value)>, &mut sink, None)
+            .unwrap();
+        assert_eq!(sink, "hi");
+
+        sink.clear();
+        mf.format_to(h2, &vec![] as &Vec<(u32, Value)>, &mut sink, None)
+            .unwrap();
+        assert_eq!(sink, "bye");
+    }
+
+    #[test]
+    fn args_for_into_vec_borrow_pattern() {
+        let code_arg = TestOps::new().out_arg(1).halt().build();
+        let cat = one_message_catalog(&["msg", "who"], "", &code_arg);
+
+        let mut mf = MultiFormatter::new([&cat], NoopHost).unwrap();
+        let handle = mf.resolve("msg").unwrap();
+
+        let mut args = mf.args_for(handle).unwrap();
+        args.insert("who", "world").expect("interned");
+        let args = args.into_vec();
+
+        let mut sink = String::new();
+        mf.format_to(handle, &args, &mut sink, None).unwrap();
         assert_eq!(sink, "world");
     }
 }

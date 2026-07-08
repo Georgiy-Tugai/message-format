@@ -1,7 +1,7 @@
 // Copyright 2026 the Message Format Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
-use message_format::runtime::{Args, FormatError, Formatter, Host, MessageHandle};
+use message_format::runtime::{Args, Catalog, FormatError, Formatter, Host, MessageHandle};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FormatOutput {
@@ -10,7 +10,7 @@ pub(crate) struct FormatOutput {
 }
 
 pub(crate) fn format<H: Host>(
-    formatter: &mut Formatter<'_, H>,
+    formatter: &mut Formatter<&'_ Catalog, H>,
     message: MessageHandle,
     args: &dyn Args,
 ) -> Result<String, FormatError> {
@@ -20,7 +20,7 @@ pub(crate) fn format<H: Host>(
 }
 
 pub(crate) fn format_by_id<H: Host>(
-    formatter: &mut Formatter<'_, H>,
+    formatter: &mut Formatter<&'_ Catalog, H>,
     message_id: &str,
     args: &dyn Args,
 ) -> Result<String, FormatError> {
@@ -29,7 +29,7 @@ pub(crate) fn format_by_id<H: Host>(
 }
 
 pub(crate) fn format_with_diagnostics_by_id<H: Host>(
-    formatter: &mut Formatter<'_, H>,
+    formatter: &mut Formatter<&'_ Catalog, H>,
     message_id: &str,
     args: &dyn Args,
 ) -> Result<FormatOutput, FormatError> {
@@ -42,7 +42,7 @@ pub(crate) fn format_with_diagnostics_by_id<H: Host>(
 
 #[cfg(test)]
 pub(crate) fn format_to_by_id<H: Host>(
-    formatter: &mut Formatter<'_, H>,
+    formatter: &mut Formatter<&'_ Catalog, H>,
     message_id: &str,
     args: &dyn Args,
     sink: &mut dyn message_format::runtime::FormatSink,

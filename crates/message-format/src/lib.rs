@@ -553,6 +553,134 @@ mod tests {
 
     #[cfg(all(feature = "compile", feature = "icu4x"))]
     #[test]
+    fn arc_bundle_into_owning_formatter() {
+        use alloc::sync::Arc;
+
+        fn make_formatter() -> MessageFormatter<Arc<Catalog>> {
+            let fr = Arc::new(Catalog::compile_str("Salut { $name }").expect("compile fr"));
+            let en = Arc::new(Catalog::compile_str("Hello { $name }").expect("compile en"));
+            let bundle = CatalogBundle::new(
+                [
+                    LocalizedCatalog::new(locale("fr"), fr),
+                    LocalizedCatalog::new(locale("en"), en),
+                ],
+                &locale("fr-CA"),
+            )
+            .expect("bundle");
+            bundle.into_formatter().expect("formatter")
+        }
+
+        let mut formatter = make_formatter();
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Salut Ada"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn bundle_clone_into_formatter_retains_bundle() {
+        use alloc::sync::Arc;
+
+        let fr = Arc::new(Catalog::compile_str("Salut { $name }").expect("compile fr"));
+        let en = Arc::new(Catalog::compile_str("Hello { $name }").expect("compile en"));
+        let bundle = CatalogBundle::new(
+            [
+                LocalizedCatalog::new(locale("fr"), Arc::clone(&fr)),
+                LocalizedCatalog::new(locale("en"), Arc::clone(&en)),
+            ],
+            &locale("fr-CA"),
+        )
+        .expect("bundle");
+
+        let mut owning = bundle.clone().into_formatter().expect("owning formatter");
+        let mut borrowing = bundle.formatter().expect("borrowing formatter");
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            owning.format_by_id("main", &args).expect("owning format"),
+            "Salut Ada"
+        );
+        assert_eq!(
+            borrowing
+                .format_by_id("main", &args)
+                .expect("borrowing format"),
+            "Salut Ada"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn for_locale_owning_arc() {
+        use alloc::sync::Arc;
+
+        let catalog = Arc::new(Catalog::compile_str("Hello { $name }").expect("compile"));
+        let mut formatter =
+            MessageFormatter::for_locale(catalog, &locale("en-US")).expect("formatter");
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "World");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Hello World"
+        );
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn for_locale_static_catalog() {
+        use alloc::boxed::Box;
+
+        let catalog: &'static Catalog = {
+            let c = Catalog::compile_str("Static { $name }").expect("compile");
+            Box::leak(Box::new(c))
+        };
+
+        fn needs_static(f: MessageFormatter<&'static Catalog>) -> MessageFormatter<&'static Catalog> {
+            f
+        }
+
+        let formatter =
+            MessageFormatter::for_locale(catalog, &locale("en-US")).expect("formatter");
+        let mut formatter = needs_static(formatter);
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "World");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Static World"
+        );
+
+        unsafe {
+            let _ = Box::from_raw(catalog as *const Catalog as *mut Catalog);
+        }
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn bundle_accessors() {
+        use alloc::sync::Arc;
+
+        let fr = Arc::new(Catalog::compile_str("Salut").expect("compile fr"));
+        let en = Arc::new(Catalog::compile_str("Hello").expect("compile en"));
+        let bundle = CatalogBundle::new(
+            [
+                LocalizedCatalog::new(locale("fr"), Arc::clone(&fr)),
+                LocalizedCatalog::new(locale("en"), Arc::clone(&en)),
+            ],
+            &locale("fr-CA"),
+        )
+        .expect("bundle");
+
+        assert!(!bundle.candidates().is_empty());
+        assert_eq!(bundle.catalogs().len(), 1);
+    }
+
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
     fn formatter_host_locale_independent_of_catalog() {
         // Compile a catalog with a bare expression (no :number annotation).
         // Float values go through BuiltinHost::format_default which is

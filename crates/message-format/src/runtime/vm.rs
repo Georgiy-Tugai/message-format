@@ -1302,7 +1302,7 @@ mod tests {
         max_fn_id
     }
 
-    fn formatter_noop(catalog: &Catalog) -> Formatter<'_, NoopHost> {
+    fn formatter_noop(catalog: &Catalog) -> Formatter<&'_ Catalog, NoopHost> {
         Formatter::new(catalog, NoopHost).expect("noop host")
     }
 
@@ -1324,7 +1324,7 @@ mod tests {
         ) -> Result<Vec<FormatError>, FormatError>;
     }
 
-    impl<H: Host> FormatterTestExt<H> for Formatter<'_, H> {
+    impl<C: AsRef<Catalog>, H: Host> FormatterTestExt<H> for Formatter<C, H> {
         fn format_by_id_for_test(
             &mut self,
             message_id: &str,

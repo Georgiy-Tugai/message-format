@@ -2,12 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
 use alloc::string::String;
+use core::fmt;
 
 use icu_locale_core::Locale;
 
 use crate::{MessageArgs, runtime};
 
 /// Reusable formatter that resolves messages across one or more catalogs.
+///
+/// The type parameter `C` controls how catalogs are held. Common choices:
+///
+/// - `&Catalog` — borrow from an existing catalog (the default for
+///   [`CatalogBundle::formatter`](crate::CatalogBundle::formatter)).
+/// - `Arc<Catalog>` — shared ownership; the resulting formatter is `'static`
+///   and can be cached in maps or embedded in session structs.
+/// - `Catalog` — full ownership.
 ///
 /// When multiple catalogs are provided, messages are resolved by searching
 /// catalogs in the order they were given. This enables message-level fallback:
@@ -16,18 +25,23 @@ use crate::{MessageArgs, runtime};
 ///
 /// Arguments are automatically resolved against the catalog that owns the
 /// matched message, so string-pool ids stay consistent.
-#[derive(Debug)]
-pub struct MessageFormatter<'a> {
+pub struct MessageFormatter<C = runtime::Catalog> {
     #[cfg(feature = "icu4x")]
-    inner: runtime::MultiFormatter<'a, alloc::boxed::Box<runtime::BuiltinHost>>,
+    inner: runtime::MultiFormatter<C, alloc::boxed::Box<runtime::BuiltinHost>>,
     #[cfg(not(feature = "icu4x"))]
-    inner: runtime::MultiFormatter<'a, runtime::NoopHost>,
+    inner: runtime::MultiFormatter<C, runtime::NoopHost>,
 }
 
-impl<'a> MessageFormatter<'a> {
+impl<C: AsRef<runtime::Catalog>> fmt::Debug for MessageFormatter<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MessageFormatter").finish_non_exhaustive()
+    }
+}
+
+impl<C: AsRef<runtime::Catalog>> MessageFormatter<C> {
     #[cfg(feature = "icu4x")]
     pub(crate) fn new(
-        catalogs: impl IntoIterator<Item = &'a runtime::Catalog>,
+        catalogs: impl IntoIterator<Item = C>,
         candidates: &[Locale],
     ) -> Result<Self, runtime::FormatError> {
         let mut last_err = None;
@@ -46,12 +60,26 @@ impl<'a> MessageFormatter<'a> {
 
     #[cfg(not(feature = "icu4x"))]
     pub(crate) fn new(
-        catalogs: impl IntoIterator<Item = &'a runtime::Catalog>,
+        catalogs: impl IntoIterator<Item = C>,
         _candidates: &[Locale],
     ) -> Result<Self, runtime::FormatError> {
         Ok(Self {
             inner: runtime::MultiFormatter::new(catalogs, runtime::NoopHost)?,
         })
+    }
+
+    /// Create a single-catalog formatter bound to one locale.
+    ///
+    /// Uses CLDR-aware locale fallback to find the best available host locale.
+    /// For message-level fallback across multiple catalogs, use
+    /// [`CatalogBundle::formatter`](crate::CatalogBundle::formatter) or
+    /// [`CatalogBundle::into_formatter`](crate::CatalogBundle::into_formatter)
+    /// instead.
+    pub fn for_locale(catalog: C, locale: &Locale) -> Result<Self, runtime::FormatError> {
+        #[cfg(feature = "profiling")]
+        profiling::function_scope!();
+        let candidates = crate::catalog::locale_candidates(locale);
+        Self::new(core::iter::once(catalog), &candidates)
     }
 
     /// Set the maximum number of VM instructions per format operation.
