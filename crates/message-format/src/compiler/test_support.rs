@@ -5,7 +5,7 @@
 
 use alloc::{string::String, vec::Vec};
 
-use crate::runtime::{Catalog, FormatError, Formatter, Host, NoopHost};
+use crate::runtime::{Catalog, FormatError, Formatter, Host, IndexedCatalog, NoopHost};
 
 use crate::compiler::compile::compile_str;
 
@@ -19,7 +19,9 @@ pub(crate) trait FormatterTestExt<H: Host> {
     ) -> Result<String, FormatError>;
 }
 
-impl<C: AsRef<Catalog>, H: Host> FormatterTestExt<H> for Formatter<C, H> {
+impl<C: AsRef<Catalog>, H: Host> FormatterTestExt<H>
+    for Formatter<IndexedCatalog<C, H::CatalogIndex>, H>
+{
     fn format_by_id_for_test(
         &mut self,
         message_id: &str,

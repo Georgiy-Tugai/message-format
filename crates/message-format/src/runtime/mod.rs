@@ -178,6 +178,7 @@ pub use error::{
     UnsupportedOperation,
 };
 pub use formatter::{Formatter, MultiFormatter, MultiMessageHandle};
+pub use indexed::{CatalogDerived, IndexedCatalog};
 pub use schema::{FuncEntry, MessageEntry, Opcode};
 pub use value::{ArgNameError, Args, MessageArgs, StrId, Value};
 pub use vm::{FormatOption, FormatSink, Host, HostFn, MessageHandle, NoopHost};
@@ -193,6 +194,9 @@ mod error;
 
 /// High-level formatting wrappers.
 mod formatter;
+
+/// Shareable per-catalog host indexes.
+mod indexed;
 
 /// Runtime value model and argument adapters.
 mod value;

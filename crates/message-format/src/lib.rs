@@ -61,6 +61,42 @@
 //! # }
 //! ```
 //!
+//! # Sharing Catalog Indexes Across Locales
+//!
+//! Building a formatter from a plain [`Catalog`] scans the catalog once to
+//! precompute host data. That scan depends only on the catalog — not the
+//! locale — so applications that format across many locales should index each
+//! catalog once and share the result: cache an `Arc<`[`IndexedCatalog`]`>` per
+//! catalog and hand out clones. [`CatalogBundle`] and
+//! [`MessageFormatter::for_locale`] accept plain and pre-indexed catalogs
+//! interchangeably (via [`IntoIndexedCatalog`]); pre-indexed ones are never
+//! re-scanned, leaving only the cheap per-locale host construction.
+//!
+//! ```rust
+//! # #[cfg(all(feature = "compile", feature = "icu4x"))]
+//! # {
+//! use std::sync::Arc;
+//! use message_format::{Catalog, IndexedCatalog, IntoIndexedCatalog, Locale, MessageArgs};
+//!
+//! let catalog = Catalog::compile_str("Hello { $name }").unwrap();
+//! // Index once; cache this (it is Send + Sync and cheap to clone the Arc).
+//! let shared: Arc<IndexedCatalog> = Arc::new(catalog.into_indexed_catalog().unwrap());
+//!
+//! let mut args = MessageArgs::new();
+//! args.insert("name", "World");
+//! for tag in ["en-US", "fr", "ja"] {
+//!     let locale: Locale = tag.parse().unwrap();
+//!     // Only the per-locale host is built here — no catalog re-scan.
+//!     let mut formatter = shared.formatter_for_locale(&locale).unwrap();
+//!     assert_eq!(formatter.format_by_id("main", &args).unwrap(), "Hello World");
+//! }
+//! # }
+//! ```
+//!
+//! `CatalogBundle::from_lookup` composes with a cache naturally: return
+//! `Arc<IndexedCatalog>` clones from the `fetch` closure and use
+//! [`CatalogBundle::into_formatter`] for an owning, `'static` formatter.
+//!
 //! # Rich Output
 //!
 //! The facade APIs optimize for plain string formatting. They do not expose the
@@ -90,7 +126,9 @@ mod catalog_compile;
 mod common;
 mod formatter;
 pub use args::MessageArgs;
-pub use catalog::{CatalogBundle, LocalizedCatalog, LookupError};
+pub use catalog::{
+    CatalogBundle, IndexedCatalog, IntoIndexedCatalog, LocalizedCatalog, LookupError,
+};
 pub use formatter::MessageFormatter;
 pub use runtime::Catalog;
 
@@ -294,8 +332,8 @@ mod tests {
     #[cfg(all(feature = "compile", feature = "icu4x"))]
     #[test]
     fn empty_bundle_reports_missing_locale_catalog() {
-        let err =
-            CatalogBundle::<Catalog>::new([], &locale("en")).expect_err("must fail");
+        let err = CatalogBundle::new(core::iter::empty::<LocalizedCatalog>(), &locale("en"))
+            .expect_err("must fail");
         assert_eq!(err, FormatError::Trap(Trap::MissingLocaleCatalog));
     }
 
@@ -507,7 +545,7 @@ mod tests {
             (locale("en"), &en_catalog),
         ];
 
-        let bundle = CatalogBundle::<&Catalog>::from_lookup(&locale("fr"), |loc| {
+        let bundle = CatalogBundle::from_lookup(&locale("fr"), |loc| {
             Ok::<_, core::convert::Infallible>(
                 catalogs
                     .iter()
@@ -556,7 +594,7 @@ mod tests {
     fn arc_bundle_into_owning_formatter() {
         use alloc::sync::Arc;
 
-        fn make_formatter() -> MessageFormatter<Arc<Catalog>> {
+        fn make_formatter() -> MessageFormatter<IndexedCatalog<Arc<Catalog>>> {
             let fr = Arc::new(Catalog::compile_str("Salut { $name }").expect("compile fr"));
             let en = Arc::new(Catalog::compile_str("Hello { $name }").expect("compile en"));
             let bundle = CatalogBundle::new(
@@ -639,7 +677,9 @@ mod tests {
             Box::leak(Box::new(c))
         };
 
-        fn needs_static(f: MessageFormatter<&'static Catalog>) -> MessageFormatter<&'static Catalog> {
+        fn needs_static(
+            f: MessageFormatter<IndexedCatalog<&'static Catalog>>,
+        ) -> MessageFormatter<IndexedCatalog<&'static Catalog>> {
             f
         }
 
@@ -679,6 +719,150 @@ mod tests {
         assert_eq!(bundle.catalogs().len(), 1);
     }
 
+    /// One `Arc<IndexedCatalog>` (an `und` catalog with a plural-select
+    /// message, exercising `by_id`, option keys, and `category_pool_ids`)
+    /// shared across `en` and `fr` bundles: the same allocation is reused —
+    /// each formatter adds one strong reference instead of re-indexing — and
+    /// output matches the auto-index path.
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn shared_indexed_und_catalog_across_locale_bundles() {
+        use alloc::sync::Arc;
+
+        let und_catalog = compile_messages(&[(
+            "items",
+            ".input {$count :number select=plural}\n.match $count\none {{one item}}\n* {{many items}}",
+        )]);
+
+        // Auto-index reference path: plain catalog, indexed inside the bundle.
+        let plain_bundle = CatalogBundle::new(
+            [LocalizedCatalog::new(locale("und"), &und_catalog)],
+            &locale("en"),
+        )
+        .expect("plain bundle");
+        let mut plain = plain_bundle.formatter().expect("plain formatter");
+
+        let shared: Arc<IndexedCatalog> = Arc::new(
+            und_catalog
+                .clone()
+                .into_indexed_catalog()
+                .expect("index once"),
+        );
+        let base = Arc::strong_count(&shared);
+
+        let en_bundle = CatalogBundle::new(
+            [LocalizedCatalog::new(locale("und"), Arc::clone(&shared))],
+            &locale("en"),
+        )
+        .expect("en bundle");
+        let fr_bundle = CatalogBundle::new(
+            [LocalizedCatalog::new(locale("und"), Arc::clone(&shared))],
+            &locale("fr"),
+        )
+        .expect("fr bundle");
+        // Pass-through: each bundle holds a clone of the same allocation.
+        assert_eq!(Arc::strong_count(&shared), base + 2);
+
+        let mut en = en_bundle.into_formatter().expect("en formatter");
+        let mut fr = fr_bundle.into_formatter().expect("fr formatter");
+        // The formatters take over the bundles' references — still no rebuild.
+        assert_eq!(Arc::strong_count(&shared), base + 2);
+
+        let mut args = MessageArgs::new();
+        args.insert("count", 1);
+        assert_eq!(en.format_by_id("items", &args).expect("en"), "one item");
+        assert_eq!(
+            en.format_by_id("items", &args).expect("en"),
+            plain.format_by_id("items", &args).expect("plain")
+        );
+        args.insert("count", 2);
+        assert_eq!(en.format_by_id("items", &args).expect("en"), "many items");
+        assert_eq!(fr.format_by_id("items", &args).expect("fr"), "many items");
+
+        drop((en, fr));
+        assert_eq!(Arc::strong_count(&shared), base);
+    }
+
+    /// `from_lookup` closures can hand out `Arc<IndexedCatalog>` clones from a
+    /// cache; `into_formatter` keeps the shared index and is `'static`-capable.
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn from_lookup_shared_indexed_owning_formatter() {
+        use alloc::sync::Arc;
+
+        let cache: Arc<IndexedCatalog> = Arc::new(
+            IndexedCatalog::new(Catalog::compile_str("Hello { $name }").expect("compile"))
+                .expect("index"),
+        );
+
+        fn make_formatter(
+            cache: &Arc<IndexedCatalog>,
+        ) -> MessageFormatter<Arc<IndexedCatalog>> {
+            let en = "en".parse::<Locale>().expect("locale");
+            let bundle = CatalogBundle::from_lookup(&en, |loc| {
+                Ok::<_, core::convert::Infallible>((*loc == en).then(|| Arc::clone(cache)))
+            })
+            .expect("bundle");
+            bundle.into_formatter().expect("formatter")
+        }
+
+        let base = Arc::strong_count(&cache);
+        let mut formatter = make_formatter(&cache);
+        assert_eq!(Arc::strong_count(&cache), base + 1);
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Hello Ada"
+        );
+    }
+
+    /// Pre-indexed catalogs can be passed to bundles by reference too.
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn bundle_accepts_pre_indexed_borrow() {
+        let fr = Catalog::compile_str("Salut { $name }").expect("compile");
+        let fr_indexed = (&fr).into_indexed_catalog().expect("index");
+
+        let bundle = CatalogBundle::new(
+            [LocalizedCatalog::new(locale("fr"), &fr_indexed)],
+            &locale("fr"),
+        )
+        .expect("bundle");
+        let mut formatter = bundle.formatter().expect("formatter");
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        assert_eq!(
+            formatter.format_by_id("main", &args).expect("format"),
+            "Salut Ada"
+        );
+    }
+
+    /// Facade convenience: mint per-locale formatters straight off a cached
+    /// `IndexedCatalog` without re-indexing.
+    #[cfg(all(feature = "compile", feature = "icu4x"))]
+    #[test]
+    fn indexed_catalog_formatter_for_locale() {
+        let indexed = Catalog::compile_str("Hello { $name }")
+            .expect("compile")
+            .into_indexed_catalog()
+            .expect("index");
+
+        let mut args = MessageArgs::new();
+        args.insert("name", "Ada");
+        for tag in ["en-US", "fr"] {
+            let mut formatter = indexed
+                .formatter_for_locale(&locale(tag))
+                .expect("formatter");
+            assert_eq!(
+                formatter.format_by_id("main", &args).expect("format"),
+                "Hello Ada"
+            );
+        }
+    }
+
     #[cfg(all(feature = "compile", feature = "icu4x"))]
     #[test]
     fn formatter_host_locale_independent_of_catalog() {
@@ -690,8 +874,9 @@ mod tests {
         // Create a formatter with host locale "fr" (French formatting uses
         // comma as decimal separator) — the catalog itself has no locale.
         let candidates = locale_candidates(&locale("fr"));
+        let indexed = IndexedCatalog::new(&catalog).expect("index");
         let mut formatter =
-            MessageFormatter::new(core::iter::once(&catalog), &candidates).expect("formatter");
+            MessageFormatter::new(core::iter::once(&indexed), &candidates).expect("formatter");
 
         let mut args = MessageArgs::new();
         args.insert("n", 123.5);

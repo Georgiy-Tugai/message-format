@@ -9,6 +9,7 @@ use core::fmt;
 use crate::runtime::{
     catalog::Catalog,
     error::{FormatError, Trap},
+    indexed::IndexedCatalog,
     value::{Args, MessageArgs, Value},
     vm::{DiagnosticsSink, FormatSink, Host, MessageHandle, run_bytecode},
 };
@@ -23,6 +24,13 @@ pub(crate) struct VmState {
 }
 
 /// Formatter executes catalog messages with caller-provided arguments and host functions.
+///
+/// The carrier parameter `P` holds an [`IndexedCatalog`] — a catalog paired
+/// with its prebuilt [`Host::CatalogIndex`] — by value or behind any
+/// `AsRef`-capable pointer (`&`, `Box`, `Rc`, `Arc`, …). [`Formatter::new`]
+/// builds the index inline (one [`Host::index`] call); to amortize that cost
+/// across formatters and locales, build the [`IndexedCatalog`] once and pass
+/// it (or a shared pointer to it) to [`Formatter::from_indexed`].
 ///
 /// Catalogs are expected to come from the compiler or prebuilt assets. This
 /// example assumes a loaded catalog whose `"main"` message invokes a host
@@ -48,40 +56,55 @@ pub(crate) struct VmState {
 /// # Ok(out)
 /// # }
 /// ```
-pub struct Formatter<C, H: Host> {
-    catalog: C,
-    index: H::CatalogIndex,
+pub struct Formatter<P, H: Host> {
+    catalog: P,
     host: H,
     vm: VmState,
 }
 
-impl<C: AsRef<Catalog>, H: Host> fmt::Debug for Formatter<C, H> {
+impl<P: fmt::Debug, H: Host> fmt::Debug for Formatter<P, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Formatter")
-            .field("catalog", self.catalog.as_ref())
+            .field("catalog", &self.catalog)
             .finish_non_exhaustive()
     }
 }
 
-impl<C: AsRef<Catalog>, H: Host> Formatter<C, H> {
-    /// Create a formatter for a loaded catalog.
+impl<C: AsRef<Catalog>, H: Host> Formatter<IndexedCatalog<C, H::CatalogIndex>, H> {
+    /// Create a formatter for a loaded catalog, building the host index inline.
     ///
-    /// Calls [`Host::index`] to pre-compute catalog-specific data.
+    /// Calls [`Host::index`] to pre-compute catalog-specific data — this
+    /// works for any host, including hosts whose index depends on host
+    /// state. When the index is catalog-only ([`CatalogDerived`](crate::runtime::CatalogDerived)),
+    /// prefer building an [`IndexedCatalog`] once and sharing it across
+    /// formatters via [`Formatter::from_indexed`].
     pub fn new(catalog: C, mut host: H) -> Result<Self, FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
         let index = host.index(catalog.as_ref())?;
-        Ok(Self {
+        Ok(Self::from_indexed(
+            IndexedCatalog::from_parts(catalog, index),
+            host,
+        ))
+    }
+}
+
+impl<P, H: Host> Formatter<P, H> {
+    /// Create a formatter from a prebuilt catalog index.
+    ///
+    /// Does *not* call [`Host::index`] — the index inside the
+    /// [`IndexedCatalog`] is reused as-is, so a catalog shared behind e.g.
+    /// `Arc<IndexedCatalog<..>>` is never re-scanned, no matter how many
+    /// formatters are built from it.
+    pub fn from_indexed<C: AsRef<Catalog>>(catalog: P, host: H) -> Self
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
+        Self {
             catalog,
-            index,
             host,
             vm: VmState::default(),
-        })
-    }
-
-    /// Returns a reference to the underlying catalog.
-    pub fn catalog(&self) -> &Catalog {
-        self.catalog.as_ref()
+        }
     }
 
     /// Set the maximum number of instructions the VM may execute per message.
@@ -94,11 +117,22 @@ impl<C: AsRef<Catalog>, H: Host> Formatter<C, H> {
         self.vm.fuel = fuel;
     }
 
+    /// Returns a reference to the underlying catalog.
+    pub fn catalog<'a, C: AsRef<Catalog> + 'a>(&'a self) -> &'a Catalog
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
+        self.catalog.as_ref().catalog()
+    }
+
     /// Resolve a message id to a reusable handle.
-    pub fn resolve(&self, message_id: &str) -> Result<MessageHandle, FormatError> {
+    pub fn resolve<C: AsRef<Catalog>>(&self, message_id: &str) -> Result<MessageHandle, FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        MessageHandle::from_catalog(self.catalog.as_ref(), message_id)
+        MessageHandle::from_catalog(self.catalog.as_ref().catalog(), message_id)
     }
 
     /// Format one message from a previously resolved handle, dispatching events to a [`FormatSink`].
@@ -109,19 +143,23 @@ impl<C: AsRef<Catalog>, H: Host> Formatter<C, H> {
     /// This is the runtime API that preserves structured markup. In contrast,
     /// string-oriented convenience helpers flatten only literal/expression text
     /// and drop markup events.
-    pub fn format_to<S: FormatSink + ?Sized>(
+    pub fn format_to<S: FormatSink + ?Sized, C: AsRef<Catalog>>(
         &mut self,
         message: MessageHandle,
         args: &dyn Args,
         sink: &mut S,
         diagnostics: Option<&mut dyn DiagnosticsSink>,
-    ) -> Result<(), FormatError> {
+    ) -> Result<(), FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
+        let indexed = self.catalog.as_ref();
         run_bytecode(
-            self.catalog.as_ref(),
+            indexed.catalog(),
             &mut self.host,
-            &self.index,
+            indexed.index(),
             message.entry_pc,
             args,
             self.vm.fuel,
@@ -147,16 +185,18 @@ pub struct MultiMessageHandle {
 /// Formatter that can operate on multiple catalogs while sharing a single
 /// [`Host`] and VM scratch state.
 ///
-/// Each catalog gets its own [`Host::CatalogIndex`], computed at construction time.
+/// Each catalog slot is an [`IndexedCatalog`] carrier `P` — the catalog plus
+/// its [`Host::CatalogIndex`]. [`MultiFormatter::new`] builds the indexes at
+/// construction time; [`MultiFormatter::from_indexed`] reuses prebuilt ones.
 /// The catalog list is fixed after construction — messages are resolved by
 /// searching catalogs in the order they were provided.
-pub struct MultiFormatter<C, H: Host> {
-    catalogs: Box<[(C, H::CatalogIndex)]>,
+pub struct MultiFormatter<P, H: Host> {
+    catalogs: Box<[P]>,
     host: H,
     vm: VmState,
 }
 
-impl<C: AsRef<Catalog>, H: Host> fmt::Debug for MultiFormatter<C, H> {
+impl<P, H: Host> fmt::Debug for MultiFormatter<P, H> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MultiFormatter")
             .field("catalog_count", &self.catalogs.len())
@@ -164,24 +204,50 @@ impl<C: AsRef<Catalog>, H: Host> fmt::Debug for MultiFormatter<C, H> {
     }
 }
 
-impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
-    /// Create a multi-catalog formatter.
+impl<C: AsRef<Catalog>, H: Host> MultiFormatter<IndexedCatalog<C, H::CatalogIndex>, H> {
+    /// Create a multi-catalog formatter, building host indexes inline.
     ///
     /// Calls [`Host::index`] for each catalog to build its catalog-specific
-    /// index. Catalogs are searched in iterator order during [`Self::resolve`].
+    /// index — this works for any host, including hosts whose index depends
+    /// on host state. When the index is catalog-only
+    /// ([`CatalogDerived`](crate::runtime::CatalogDerived)), prefer building
+    /// each [`IndexedCatalog`] once and sharing them across formatters via
+    /// [`MultiFormatter::from_indexed`]. Catalogs are searched in iterator
+    /// order during [`Self::resolve`].
     pub fn new(
         catalogs: impl IntoIterator<Item = C>,
         mut host: H,
     ) -> Result<Self, FormatError> {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        let catalogs: Box<[_]> = catalogs
+        let catalogs = catalogs
             .into_iter()
             .map(|catalog| {
                 let index = host.index(catalog.as_ref())?;
-                Ok((catalog, index))
+                Ok(IndexedCatalog::from_parts(catalog, index))
             })
-            .collect::<Result<_, FormatError>>()?;
+            .collect::<Result<Vec<_>, FormatError>>()?;
+        Self::from_indexed(catalogs, host)
+    }
+}
+
+impl<P, H: Host> MultiFormatter<P, H> {
+    /// Create a multi-catalog formatter from prebuilt catalog indexes.
+    ///
+    /// Does *not* call [`Host::index`] — each carrier's [`IndexedCatalog`]
+    /// is reused as-is, so catalogs shared behind e.g.
+    /// `Arc<IndexedCatalog<..>>` are never re-scanned. Catalogs are searched
+    /// in iterator order during [`Self::resolve`].
+    pub fn from_indexed<C: AsRef<Catalog>>(
+        catalogs: impl IntoIterator<Item = P>,
+        host: H,
+    ) -> Result<Self, FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
+        #[cfg(feature = "profiling")]
+        profiling::function_scope!();
+        let catalogs: Box<[P]> = catalogs.into_iter().collect();
         if catalogs.len() > u32::MAX as usize {
             return Err(FormatError::Trap(Trap::InvalidCatalogIndex));
         }
@@ -204,11 +270,17 @@ impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
     /// Resolve a message id by searching catalogs in order.
     ///
     /// Returns a handle to the first catalog that contains the message.
-    pub fn resolve(&self, message_id: &str) -> Result<MultiMessageHandle, FormatError> {
+    pub fn resolve<C: AsRef<Catalog>>(
+        &self,
+        message_id: &str,
+    ) -> Result<MultiMessageHandle, FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        for (idx, (catalog, _)) in self.catalogs.iter().enumerate() {
-            if let Some(entry_pc) = catalog.as_ref().message_pc(message_id) {
+        for (idx, carrier) in self.catalogs.iter().enumerate() {
+            if let Some(entry_pc) = carrier.as_ref().catalog().message_pc(message_id) {
                 return Ok(MultiMessageHandle {
                     #[allow(
                         clippy::cast_possible_truncation,
@@ -234,10 +306,16 @@ impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
     /// from another `MultiFormatter` whose slot index happens to be in range
     /// will be accepted — the caller must ensure handles are used with the
     /// formatter that produced them.
-    pub fn catalog_for(&self, handle: MultiMessageHandle) -> Result<&Catalog, FormatError> {
+    pub fn catalog_for<'a, C: AsRef<Catalog> + 'a>(
+        &'a self,
+        handle: MultiMessageHandle,
+    ) -> Result<&'a Catalog, FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
         self.catalogs
             .get(handle.catalog_idx as usize)
-            .map(|(catalog, _)| catalog.as_ref())
+            .map(|carrier| carrier.as_ref().catalog())
             .ok_or(FormatError::Trap(Trap::InvalidCatalogIndex))
     }
 
@@ -251,8 +329,14 @@ impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
     ///
     /// Returns [`FormatError::Trap`] if the catalog slot index is out of
     /// range. See [`Self::catalog_for`] for the handle-provenance caveat.
-    pub fn args_for(&self, handle: MultiMessageHandle) -> Result<MessageArgs<'_>, FormatError> {
-        self.catalog_for(handle).map(MessageArgs::new)
+    pub fn args_for<'a, C: AsRef<Catalog> + 'a>(
+        &'a self,
+        handle: MultiMessageHandle,
+    ) -> Result<MessageArgs<'a>, FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
+        self.catalog_for::<C>(handle).map(MessageArgs::new)
     }
 
     /// Format one message, dispatching events to a [`FormatSink`].
@@ -274,23 +358,27 @@ impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
     ///
     /// Returns [`FormatError::Trap`] if the catalog slot index is out of
     /// range. See [`Self::catalog_for`] for the handle-provenance caveat.
-    pub fn format_to<S: FormatSink + ?Sized>(
+    pub fn format_to<S: FormatSink + ?Sized, C: AsRef<Catalog>>(
         &mut self,
         message: MultiMessageHandle,
         args: &dyn Args,
         sink: &mut S,
         diagnostics: Option<&mut dyn DiagnosticsSink>,
-    ) -> Result<(), FormatError> {
+    ) -> Result<(), FormatError>
+    where
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
         #[cfg(feature = "profiling")]
         profiling::function_scope!();
-        let (catalog, index) = self
+        let indexed = self
             .catalogs
             .get(message.catalog_idx as usize)
-            .ok_or(FormatError::Trap(Trap::InvalidCatalogIndex))?;
+            .ok_or(FormatError::Trap(Trap::InvalidCatalogIndex))?
+            .as_ref();
         run_bytecode(
-            catalog.as_ref(),
+            indexed.catalog(),
             &mut self.host,
-            index,
+            indexed.index(),
             message.entry_pc,
             args,
             self.vm.fuel,
@@ -306,10 +394,12 @@ impl<C: AsRef<Catalog>, H: Host> MultiFormatter<C, H> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::{string::String, vec};
+    use alloc::{string::String, sync::Arc, vec};
+    use core::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
     use crate::runtime::catalog::{MessageEntry, build_catalog};
+    use crate::runtime::error::HostCallError;
     use crate::runtime::vm::NoopHost;
 
     /// Build a minimal catalog with one message named by `strings[0]`.
@@ -485,5 +575,91 @@ mod tests {
         let mut sink = String::new();
         mf.format_to(handle, &args, &mut sink, None).unwrap();
         assert_eq!(sink, "world");
+    }
+
+    /// Host whose `index` implementation counts invocations, standing in for
+    /// a host with instance-dependent indexing-shaped work.
+    struct CountingHost<'a>(&'a AtomicUsize);
+
+    impl Host for CountingHost<'_> {
+        type CatalogIndex = ();
+
+        fn index(&mut self, _catalog: &Catalog) -> Result<(), FormatError> {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn call(
+            &mut self,
+            _catalog: &Catalog,
+            _index: &(),
+            fn_id: u16,
+            _args: &[Value],
+            _opts: &[(u32, Value)],
+        ) -> Result<Value, HostCallError> {
+            Err(HostCallError::UnknownFunction { fn_id })
+        }
+    }
+
+    fn format_greet<P, C, H>(formatter: &mut Formatter<P, H>) -> String
+    where
+        C: AsRef<Catalog>,
+        H: Host,
+        P: AsRef<IndexedCatalog<C, H::CatalogIndex>>,
+    {
+        let handle = formatter.resolve("greet").unwrap();
+        let mut sink = String::new();
+        formatter
+            .format_to(handle, &vec![] as &Vec<(u32, Value)>, &mut sink, None)
+            .unwrap();
+        sink
+    }
+
+    /// `new` runs `Host::index` exactly once; `from_indexed` never runs it.
+    #[test]
+    fn from_indexed_skips_host_index() {
+        let code = TestOps::new().out_slice(0, 2).halt().build();
+        let catalog = one_message_catalog(&["greet"], "hi", &code);
+
+        let inline_calls = AtomicUsize::new(0);
+        let mut inline = Formatter::new(&catalog, CountingHost(&inline_calls)).unwrap();
+        assert_eq!(inline_calls.load(Ordering::Relaxed), 1);
+
+        let shared_calls = AtomicUsize::new(0);
+        let indexed: IndexedCatalog<&Catalog, ()> = IndexedCatalog::new(&catalog).unwrap();
+        let mut shared = Formatter::from_indexed(&indexed, CountingHost(&shared_calls));
+        assert_eq!(shared_calls.load(Ordering::Relaxed), 0);
+
+        assert_eq!(format_greet(&mut inline), format_greet(&mut shared));
+        assert_eq!(shared_calls.load(Ordering::Relaxed), 0);
+    }
+
+    /// One `Arc<IndexedCatalog>` shared by two `MultiFormatter`s formats
+    /// identically to the inline-index construction path.
+    #[test]
+    fn shared_arc_indexed_catalog_across_multi_formatters() {
+        let code = TestOps::new().out_slice(0, 2).halt().build();
+        let catalog = one_message_catalog(&["greet"], "hi", &code);
+
+        let mut inline = MultiFormatter::new([catalog.clone()], NoopHost).unwrap();
+
+        let shared: Arc<IndexedCatalog<Catalog, ()>> =
+            Arc::new(IndexedCatalog::new(catalog).unwrap());
+        let mut mf1 = MultiFormatter::from_indexed([Arc::clone(&shared)], NoopHost).unwrap();
+        let mut mf2 = MultiFormatter::from_indexed([Arc::clone(&shared)], NoopHost).unwrap();
+
+        let mut expected = String::new();
+        let handle = inline.resolve("greet").unwrap();
+        inline
+            .format_to(handle, &vec![] as &Vec<(u32, Value)>, &mut expected, None)
+            .unwrap();
+
+        for mf in [&mut mf1, &mut mf2] {
+            let handle = mf.resolve("greet").unwrap();
+            let mut sink = String::new();
+            mf.format_to(handle, &vec![] as &Vec<(u32, Value)>, &mut sink, None)
+                .unwrap();
+            assert_eq!(sink, expected);
+        }
     }
 }

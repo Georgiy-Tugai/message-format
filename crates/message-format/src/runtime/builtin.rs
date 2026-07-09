@@ -28,6 +28,7 @@ use crate::runtime::{
         FormatError, HostCallError, ImplementationFailure, MessageFunctionError, Trap,
         UnsupportedOperation,
     },
+    indexed::CatalogDerived,
     value::Value,
     vm::Host,
 };
@@ -148,7 +149,7 @@ impl BuiltinOptionKey {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct BuiltinEntry {
     func: BuiltinFn,
     options: [Option<String>; BUILTIN_OPTION_KEY_COUNT],
@@ -206,7 +207,12 @@ struct TimeStyleDateTimeFormatterCache {
 }
 
 /// Pre-parsed catalog data needed by the built-in host.
-#[derive(Debug)]
+///
+/// The index is a pure function of the catalog ([`CatalogDerived`]) — it
+/// depends on neither the host instance nor the locale. It is `Send + Sync`,
+/// so an [`IndexedCatalog`](crate::runtime::IndexedCatalog) holding it can be
+/// built once per catalog and shared via `Arc` across locales and threads.
+#[derive(Debug, Clone)]
 pub struct BuiltinHostCatalogIndex {
     by_id: BTreeMap<u16, BuiltinEntry>,
     option_keys_by_str_id: BTreeMap<u32, BuiltinOptionKey>,
@@ -491,11 +497,17 @@ pub fn locale_fallback_candidates(locale: &Locale) -> Vec<Locale> {
     out
 }
 
+impl CatalogDerived for BuiltinHostCatalogIndex {
+    fn from_catalog(catalog: &Catalog) -> Result<Self, FormatError> {
+        Self::new(catalog)
+    }
+}
+
 impl Host for BuiltinHost {
     type CatalogIndex = BuiltinHostCatalogIndex;
 
     fn index(&mut self, catalog: &Catalog) -> Result<BuiltinHostCatalogIndex, FormatError> {
-        BuiltinHostCatalogIndex::new(catalog)
+        BuiltinHostCatalogIndex::from_catalog(catalog)
     }
 
     fn call(

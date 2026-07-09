@@ -11,8 +11,8 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use icu_locale_core::Locale;
 use message_format::compiler::compile_str;
 use message_format::runtime::{
-    Args, BuiltinHost, Catalog, FormatError, FormatSink, Formatter, Host, HostFn, MessageArgs,
-    MessageHandle, NoopHost, Value,
+    Args, BuiltinHost, Catalog, FormatError, FormatSink, Formatter, Host, HostFn, IndexedCatalog,
+    MessageArgs, MessageHandle, NoopHost, Value,
     catalog::{FuncEntry, MessageEntry, build_catalog, build_catalog_with_funcs},
     vm,
 };
@@ -36,7 +36,9 @@ trait RuntimeFormatExt<H: Host> {
     ) -> Result<(), FormatError>;
 }
 
-impl<C: AsRef<Catalog>, H: Host> RuntimeFormatExt<H> for Formatter<C, H> {
+impl<C: AsRef<Catalog>, H: Host> RuntimeFormatExt<H>
+    for Formatter<IndexedCatalog<C, H::CatalogIndex>, H>
+{
     fn format_for_bench(
         &mut self,
         message: MessageHandle,

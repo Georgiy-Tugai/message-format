@@ -47,6 +47,15 @@ Pipeline:
 
 Host implementations must be side-effect safe for repeated calls because the VM may execute the same message many times with reused formatter scratch buffers.
 
+### Catalog indexes and sharing eligibility
+
+`Host::index` precomputes per-catalog data (`Host::CatalogIndex`) once per formatter construction. Two kinds of hosts exist:
+
+- **Catalog-only indexes** — the index is a pure function of the catalog: no host instance, no locale. Such hosts implement `CatalogDerived` for the index type and reduce `Host::index` to the one-line delegation `<Self::CatalogIndex as CatalogDerived>::from_catalog(catalog)`, so the two build paths cannot diverge. These indexes are eligible for sharing: build an `IndexedCatalog` once per catalog (`IndexedCatalog::new`) and construct any number of formatters from it via `Formatter::from_indexed` / `MultiFormatter::from_indexed`, which skip `Host::index` entirely. The built-in host's `BuiltinHostCatalogIndex` is catalog-only and `Send + Sync`, so `Arc<IndexedCatalog<_, BuiltinHostCatalogIndex>>` can be cached across locales and threads.
+- **Instance-dependent indexes** — `Host::index` reads host state. These hosts keep implementing `Host::index` freely, but are *not* eligible for the catalog-only sharing path; their indexes must be built per host via `Formatter::new` / `MultiFormatter::new`, or paired explicitly with `IndexedCatalog::from_parts`.
+
+`IndexedCatalog::from_parts` carries a provenance contract: the index must have been built from the paired catalog. A mismatched pair is memory-safe and panic-free (all id lookups are bounds-checked), but silently produces wrong output — the same contract class as message-handle provenance.
+
 ## Structured Output (FormatSink)
 
 `Formatter::format_to` and `Formatter::format_to_resolved` dispatch formatting events to a consumer-provided `FormatSink` instead of producing a flat `String`. The sink receives four event types:

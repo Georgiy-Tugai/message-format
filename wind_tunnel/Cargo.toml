@@ -32,3 +32,7 @@ harness = false
 [[bench]]
 name = "loading"
 harness = false
+
+[[bench]]
+name = "indexing"
+harness = false

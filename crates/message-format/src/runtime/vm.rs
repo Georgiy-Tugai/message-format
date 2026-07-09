@@ -47,9 +47,23 @@ pub trait Host {
 
     /// Pre-compute catalog-specific data for this host.
     ///
-    /// Called once by [`Formatter::new`](crate::runtime::Formatter::new) and stored for the lifetime of the
-    /// formatter.  Implementations that do not need catalog data should use
-    /// `type CatalogIndex = ();` and return `Ok(())`.
+    /// Called once per catalog by [`Formatter::new`](crate::runtime::Formatter::new) /
+    /// [`MultiFormatter::new`](crate::runtime::MultiFormatter::new) and stored for the
+    /// lifetime of the formatter.  Implementations that do not need catalog
+    /// data should use `type CatalogIndex = ();` and return `Ok(())`.
+    ///
+    /// When the index is a pure function of the catalog (no host instance, no
+    /// locale), implement [`CatalogDerived`](crate::runtime::CatalogDerived)
+    /// for the index type and make this method the one-line delegation
+    /// `<Self::CatalogIndex as CatalogDerived>::from_catalog(catalog)` so the
+    /// two build paths cannot diverge. Such indexes can then be built once via
+    /// [`IndexedCatalog::new`](crate::runtime::IndexedCatalog::new) and shared
+    /// across formatters and locales with
+    /// [`Formatter::from_indexed`](crate::runtime::Formatter::from_indexed) /
+    /// [`MultiFormatter::from_indexed`](crate::runtime::MultiFormatter::from_indexed),
+    /// which skip this method entirely. Hosts whose index depends on host
+    /// state implement this method freely, but are then not eligible for the
+    /// catalog-only sharing path.
     fn index(&mut self, catalog: &Catalog) -> Result<Self::CatalogIndex, FormatError>;
 
     /// Call function id with positional args and `(key, value)` options.
@@ -1246,6 +1260,7 @@ mod tests {
 
     use super::*;
     use crate::runtime::Formatter;
+    use crate::runtime::indexed::IndexedCatalog;
     use crate::runtime::catalog::{
         FuncEntry, MessageEntry, build_catalog, build_catalog_with_funcs,
     };
@@ -1302,7 +1317,7 @@ mod tests {
         max_fn_id
     }
 
-    fn formatter_noop(catalog: &Catalog) -> Formatter<&'_ Catalog, NoopHost> {
+    fn formatter_noop(catalog: &Catalog) -> Formatter<IndexedCatalog<&'_ Catalog, ()>, NoopHost> {
         Formatter::new(catalog, NoopHost).expect("noop host")
     }
 
@@ -1324,7 +1339,9 @@ mod tests {
         ) -> Result<Vec<FormatError>, FormatError>;
     }
 
-    impl<C: AsRef<Catalog>, H: Host> FormatterTestExt<H> for Formatter<C, H> {
+    impl<C: AsRef<Catalog>, H: Host> FormatterTestExt<H>
+        for Formatter<IndexedCatalog<C, H::CatalogIndex>, H>
+    {
         fn format_by_id_for_test(
             &mut self,
             message_id: &str,
